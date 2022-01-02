@@ -7,7 +7,8 @@
 
 # install
 
-cargo install atosl
+1. install rust via : https://www.rust-lang.org/tools/install
+2. cargo install atosl
 
 
 # usage
