@@ -45,7 +45,7 @@ fn main() {
     let object_path = args.object_path.into_os_string().into_string().unwrap();
     let debug_mode = args.debug != 0;
 
-    let result = atosl::print_symbolize_addresses(
+    let result = atosl::print_addresses(
         &object_path,
         args.load_address,
         args.addresses,

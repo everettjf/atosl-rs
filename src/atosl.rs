@@ -5,11 +5,11 @@
 //
 use anyhow::{anyhow, Result};
 use gimli::{DW_TAG_subprogram, DebugInfoOffset, Dwarf, EndianSlice, RunTimeEndian};
-use object::{Object, ObjectSection, ObjectSymbol};
+use object::{Object, ObjectSection};
 use std::path::Path;
 use std::{borrow, fs};
 
-pub fn print_symbolize_addresses(
+pub fn print_addresses(
     object_path: &str,
     load_address: u64,
     addresses: Vec<u64>,
@@ -25,8 +25,10 @@ pub fn print_symbolize_addresses(
         .ok_or(anyhow!("file name error(to_str)"))?;
 
     if is_object_dwarf(&object) {
-        println!("dwarf");
-        symbolize_addresses_by_dwarf(
+        if debug_mode {
+            println!("dwarf");
+        }
+        dwarf_symbolize_addresses(
             &object,
             object_filename,
             load_address,
@@ -34,8 +36,10 @@ pub fn print_symbolize_addresses(
             debug_mode,
         )
     } else {
-        println!("symbols");
-        symbolize_addresses_by_symbols(
+        if debug_mode {
+            println!("symbols");
+        }
+        symbol_symbolize_addresses(
             &object,
             object_filename,
             load_address,
@@ -45,7 +49,15 @@ pub fn print_symbolize_addresses(
     }
 }
 
-fn symbolize_addresses_by_symbols(
+fn is_object_dwarf(object: &object::File) -> bool {
+    if let Some(_) = object.section_by_name("__debug_line") {
+        true
+    } else {
+        false
+    }
+}
+
+fn symbol_symbolize_addresses(
     object: &object::File,
     object_filename: &str,
     load_address: u64,
@@ -59,7 +71,7 @@ fn symbolize_addresses_by_symbols(
         }
 
         let symbol_result =
-            symbols_symbolize_address(&object, object_filename, load_address, address, debug_mode);
+            symbol_symbolize_address(&object, object_filename, load_address, address, debug_mode);
         if debug_mode {
             println!("RESULT:")
         }
@@ -75,38 +87,30 @@ fn symbolize_addresses_by_symbols(
     Ok(())
 }
 
-fn symbols_symbolize_address(
+fn symbol_symbolize_address(
     object: &object::File,
     object_filename: &str,
     load_address: u64,
     address: u64,
-    debug_mode: bool,
+    _debug_mode: bool,
 ) -> Result<String, anyhow::Error> {
     let search_address = address - load_address;
 
-    let mut found_symbol: Option<String> = None;
-    let mut last_symbol: Option<String> = None;
-    let mut symbols = object.symbols();
-    while let Some(symbol) = symbols.next() {
-        if debug_mode {
-            println!("symbol {:016x} : {:?}", symbol.address(), symbol.name());
-        }
-        if search_address > symbol.address() {
-            last_symbol = Some(symbol.name().unwrap_or_default().to_string());
-        } else {
-            found_symbol = last_symbol.clone();
-        }
-    }
-    if let Some(symbol) = found_symbol {
+    let symbols = object.symbol_map();
+    let found_symbol = symbols.get(search_address);
+
+    if let Some(found_symbol) = found_symbol {
         // expect format
         // main (in BinaryName)
-        let symbolize_result = format!("{} (in {})", symbol, object_filename);
+        let offset = search_address - found_symbol.address();
+        let symbolize_result = format!("{} (in {}) + {}", found_symbol.name(), object_filename, offset);
         return Ok(symbolize_result);
     }
+
     Err(anyhow!("failed search symbol"))
 }
 
-fn symbolize_addresses_by_dwarf(
+fn dwarf_symbolize_addresses(
     object: &object::File,
     object_filename: &str,
     load_address: u64,
@@ -142,7 +146,15 @@ fn symbolize_addresses_by_dwarf(
         }
         match symbol_result {
             Ok(symbol) => println!("{}", symbol),
-            Err(err) => println!("N/A - {}", err),
+            Err(_) => {
+                // downgrade to symbol table search
+                let symbol_result =
+                    symbol_symbolize_address(&object, object_filename, load_address, address, debug_mode);
+                match symbol_result {
+                    Ok(symbol) => println!("{}", symbol),
+                    Err(err) => println!("N/A - {}", err),
+                };
+            }
         };
 
         if debug_mode {
@@ -152,13 +164,6 @@ fn symbolize_addresses_by_dwarf(
     Ok(())
 }
 
-fn is_object_dwarf(object: &object::File) -> bool {
-    if let Some(_) = object.section_by_name("__debug_line") {
-        true
-    } else {
-        false
-    }
-}
 
 fn dwarf_symbolize_address(
     dwarf: &Dwarf<EndianSlice<RunTimeEndian>>,
@@ -213,7 +218,7 @@ fn dwarf_symbolize_address(
                 let mut low_pc: Option<u64> = None;
                 let mut high_pc: Option<u64> = None;
                 if let Ok(Some(gimli::AttributeValue::Addr(lowpc_val))) =
-                    entry.attr_value(gimli::DW_AT_low_pc)
+                entry.attr_value(gimli::DW_AT_low_pc)
                 {
                     low_pc = Some(lowpc_val);
                     let high_pc_value = entry.attr_value(gimli::DW_AT_high_pc);
@@ -297,7 +302,7 @@ fn dwarf_symbolize_address(
     };
 
     if let (Some(symbol_name), Some(file_name), Some(line)) =
-        (found_symbol_name, found_file_name, found_line)
+    (found_symbol_name, found_file_name, found_line)
     {
         // expect format
         // main (in BinaryName) (main.m:100)
@@ -309,3 +314,4 @@ fn dwarf_symbolize_address(
     }
     Err(anyhow!("failed search symbol"))
 }
+
