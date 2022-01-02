@@ -3,7 +3,7 @@
 🦀️atos for linux by rust - A partial replacement for Apple's atos tool for converting addresses within a binary file to symbols.
 
 
-> Tested on dwarf and macho
+> tested on dwarf and macho
 
 # install
 
