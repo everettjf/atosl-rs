@@ -8,6 +8,7 @@ use gimli::{DW_TAG_subprogram, DebugInfoOffset, Dwarf, EndianSlice, RunTimeEndia
 use object::{Object, ObjectSection};
 use std::path::Path;
 use std::{borrow, fs};
+use crate::demangle;
 
 pub fn print_addresses(
     object_path: &str,
@@ -103,7 +104,8 @@ fn symbol_symbolize_address(
         // expect format
         // main (in BinaryName)
         let offset = search_address - found_symbol.address();
-        let symbolize_result = format!("{} (in {}) + {}", found_symbol.name(), object_filename, offset);
+        let demangled_name = demangle::demangle_symbol(found_symbol.name());
+        let symbolize_result = format!("{} (in {}) + {}", demangled_name, object_filename, offset);
         return Ok(symbolize_result);
     }
 
@@ -306,9 +308,11 @@ fn dwarf_symbolize_address(
     {
         // expect format
         // main (in BinaryName) (main.m:100)
+
+        let demangled_name = demangle::demangle_symbol(&symbol_name);
         let symbolize_result = format!(
             "{} (in {}) ({}:{})",
-            symbol_name, object_filename, file_name, line
+            demangled_name, object_filename, file_name, line
         );
         return Ok(symbolize_result);
     }

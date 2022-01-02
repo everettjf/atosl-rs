@@ -1,8 +1,8 @@
 [package]
 name = "atosl"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
-description = "atosl by rust"
+description = "🦀️atos for linux by rust - A partial replacement for Apple's atos tool for converting addresses within a binary file to symbols."
 license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -13,3 +13,5 @@ clap = { version = "3.0.0", features = ["derive"] }
 gimli = "0.26.1"
 memmap = "0.7.0"
 object = "0.28.1"
+symbolic-common = "8.5.0"
+symbolic-demangle = "8.5.0"
