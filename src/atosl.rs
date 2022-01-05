@@ -14,7 +14,7 @@ pub fn print_addresses(
     object_path: &str,
     load_address: u64,
     addresses: Vec<u64>,
-    debug_mode: bool,
+    verbose: bool,
     file_offset_type: bool,
 ) -> Result<(), anyhow::Error> {
     let file = fs::File::open(&object_path)?;
@@ -27,7 +27,7 @@ pub fn print_addresses(
         .ok_or(anyhow!("file name error(to_str)"))?;
 
     if is_object_dwarf(&object) {
-        if debug_mode {
+        if verbose {
             println!("dwarf");
         }
         dwarf_symbolize_addresses(
@@ -35,11 +35,11 @@ pub fn print_addresses(
             object_filename,
             load_address,
             addresses,
-            debug_mode,
+            verbose,
             file_offset_type,
         )
     } else {
-        if debug_mode {
+        if verbose {
             println!("symbols");
         }
         symbol_symbolize_addresses(
@@ -47,7 +47,7 @@ pub fn print_addresses(
             object_filename,
             load_address,
             addresses,
-            debug_mode,
+            verbose,
             file_offset_type,
         )
     }
@@ -66,7 +66,7 @@ fn symbol_symbolize_addresses(
     object_filename: &str,
     load_address: u64,
     addresses: Vec<u64>,
-    debug_mode: bool,
+    verbose: bool,
     file_offset_type: bool,
 ) -> Result<(), anyhow::Error> {
     // find vmaddr for __TEXT segment
@@ -82,7 +82,7 @@ fn symbol_symbolize_addresses(
     }
 
     for address in addresses {
-        if debug_mode {
+        if verbose {
             println!("---------------------------------------------");
             println!("BEGIN ADDRESS {} | {:016x}", address, address);
         }
@@ -93,10 +93,10 @@ fn symbol_symbolize_addresses(
             load_address,
             address,
             text_vmaddr,
-            debug_mode,
+            verbose,
             file_offset_type,
         );
-        if debug_mode {
+        if verbose {
             println!("RESULT:")
         }
         match symbol_result {
@@ -104,7 +104,7 @@ fn symbol_symbolize_addresses(
             Err(err) => println!("N/A - {}", err),
         };
 
-        if debug_mode {
+        if verbose {
             println!("END ADDRESS {} | {:016x}", address, address);
         }
     }
@@ -117,7 +117,7 @@ fn symbol_symbolize_address(
     load_address: u64,
     address: u64,
     text_vmaddr: u64,
-    _debug_mode: bool,
+    _verbose: bool,
     file_offset_type: bool,
 ) -> Result<String, anyhow::Error> {
     let search_address: u64 = if file_offset_type {
@@ -146,7 +146,7 @@ fn dwarf_symbolize_addresses(
     object_filename: &str,
     load_address: u64,
     addresses: Vec<u64>,
-    debug_mode: bool,
+    verbose: bool,
     file_offset_type: bool,
 ) -> Result<(), anyhow::Error> {
     let endian = if object.is_little_endian() {
@@ -178,7 +178,7 @@ fn dwarf_symbolize_addresses(
     }
 
     for address in addresses {
-        if debug_mode {
+        if verbose {
             println!("---------------------------------------------");
             println!("BEGIN ADDRESS {} | {:016x}", address, address);
         }
@@ -189,10 +189,10 @@ fn dwarf_symbolize_addresses(
             load_address,
             address,
             text_vmaddr,
-            debug_mode,
+            verbose,
             file_offset_type,
         );
-        if debug_mode {
+        if verbose {
             println!("RESULT:")
         }
         match symbol_result {
@@ -205,7 +205,7 @@ fn dwarf_symbolize_addresses(
                     load_address,
                     address,
                     text_vmaddr,
-                    debug_mode,
+                    verbose,
                     file_offset_type,
                 );
                 match symbol_result {
@@ -215,7 +215,7 @@ fn dwarf_symbolize_addresses(
             }
         };
 
-        if debug_mode {
+        if verbose {
             println!("END ADDRESS {} | {:016x}", address, address);
         }
     }
@@ -228,7 +228,7 @@ fn dwarf_symbolize_address(
     load_address: u64,
     address: u64,
     text_vmaddr: u64,
-    debug_mode: bool,
+    verbose: bool,
     file_offset_type: bool,
 ) -> Result<String, anyhow::Error> {
     let search_address: u64 = if file_offset_type {
@@ -268,7 +268,7 @@ fn dwarf_symbolize_address(
     // catch header
     let debug_info_header = dwarf.debug_info.header_from_offset(debug_info_offset)?;
 
-    if debug_mode {
+    if verbose {
         println!("got debug info header 0x{:016x}", debug_info_offset.0);
     };
 
@@ -287,7 +287,7 @@ fn dwarf_symbolize_address(
                     low_pc = Some(lowpc_val);
                     let high_pc_value = entry.attr_value(gimli::DW_AT_high_pc);
 
-                    if debug_mode {
+                    if verbose {
                         println!("high pc value : {:?}", high_pc_value);
                     }
 
@@ -300,7 +300,7 @@ fn dwarf_symbolize_address(
                     }
                 }
 
-                if debug_mode {
+                if verbose {
                     println!("low pc = {:?}, high pc = {:?}", low_pc, high_pc)
                 }
 
@@ -317,7 +317,7 @@ fn dwarf_symbolize_address(
             }
         }
     }
-    if debug_mode {
+    if verbose {
         println!("found_symbol_name = {:?}", found_symbol_name);
     };
 
@@ -358,7 +358,7 @@ fn dwarf_symbolize_address(
         }
     }
 
-    if debug_mode {
+    if verbose {
         println!(
             "found_file_name = {:?} found_line = {:?}",
             found_file_name, found_line
