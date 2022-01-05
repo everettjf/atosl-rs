@@ -24,13 +24,13 @@ ARGS:
     <ADDRESSES>...    Addresses need to translate
 
 OPTIONS:
-    -l <LOAD_ADDRESS>            Load address of binary image
-    -o <OBJECT_PATH>             Symbol file path or binary file path
-    -d <DEBUG>                   Enable debug mode with extra output [default: 0]
-    -f <FILE_OFFSET_TYPE>        Addresses are file offsets (ignore vmaddr in __TEXT or other
-                                 executable segment) [default: 0]
-    -h, --help                   Print help information
-    -V, --version                Print version information
+    -l <LOAD_ADDRESS>        Load address of binary image
+    -o <OBJECT_PATH>         Symbol file path or binary file path
+    -f                       Addresses are file offsets (ignore vmaddr in __TEXT or other executable
+                             segment)
+    -v                       Enable verbose mode with extra output
+    -h, --help               Print help information
+    -V, --version            Print version information
 ```
 
 
