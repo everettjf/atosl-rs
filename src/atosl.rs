@@ -5,7 +5,7 @@
 //
 use anyhow::{anyhow, Result};
 use gimli::{DW_TAG_subprogram, DebugInfoOffset, Dwarf, EndianSlice, RunTimeEndian};
-use object::{Object, ObjectSection};
+use object::{Object, ObjectSection, ObjectSegment};
 use std::path::Path;
 use std::{borrow, fs};
 use crate::demangle;
@@ -135,6 +135,17 @@ fn dwarf_symbolize_addresses(
     })?;
     let dwarf = dwarf_cow.borrow(|section| gimli::EndianSlice::new((&*section).as_ref(), endian));
 
+    let mut segs = object.segments();
+    let mut page_zero_vmsize = 0;
+    while let Some(seg) = segs.next() {
+        if let Some(name) = seg.name()? {
+            if name == "__PAGEZERO" {
+                page_zero_vmsize = seg.size();
+                break;
+            }
+        }
+    }
+
     for address in addresses {
         if debug_mode {
             println!("---------------------------------------------");
@@ -142,7 +153,7 @@ fn dwarf_symbolize_addresses(
         }
 
         let symbol_result =
-            dwarf_symbolize_address(&dwarf, object_filename, load_address, address, debug_mode);
+            dwarf_symbolize_address(&dwarf, object_filename, load_address, address, page_zero_vmsize, debug_mode);
         if debug_mode {
             println!("RESULT:")
         }
@@ -172,9 +183,10 @@ fn dwarf_symbolize_address(
     object_filename: &str,
     load_address: u64,
     address: u64,
+    page_zero_vmsize: u64,
     debug_mode: bool,
 ) -> Result<String, anyhow::Error> {
-    let search_address = address - load_address;
+    let search_address = address - load_address + page_zero_vmsize;
 
     // aranges
     let mut debug_info_offset: Option<DebugInfoOffset> = None;
@@ -194,6 +206,7 @@ fn dwarf_symbolize_address(
 
         if found_address {
             debug_info_offset = Some(header.debug_info_offset());
+            break;
         }
     }
 
