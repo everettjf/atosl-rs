@@ -3,12 +3,12 @@
 // email : everettjf@live.com
 // created at 2022-01-01
 //
+use crate::demangle;
 use anyhow::{anyhow, Result};
 use gimli::{DW_TAG_subprogram, DebugInfoOffset, Dwarf, EndianSlice, RunTimeEndian};
 use object::{Object, ObjectSection, ObjectSegment};
 use std::path::Path;
 use std::{borrow, fs};
-use crate::demangle;
 
 pub fn print_addresses(
     object_path: &str,
@@ -136,11 +136,11 @@ fn dwarf_symbolize_addresses(
     let dwarf = dwarf_cow.borrow(|section| gimli::EndianSlice::new((&*section).as_ref(), endian));
 
     let mut segs = object.segments();
-    let mut page_zero_vmsize = 0;
+    let mut text_vmaddr = 0;
     while let Some(seg) = segs.next() {
         if let Some(name) = seg.name()? {
-            if name == "__PAGEZERO" {
-                page_zero_vmsize = seg.size();
+            if name == "__TEXT" {
+                text_vmaddr = seg.address();
                 break;
             }
         }
@@ -152,8 +152,14 @@ fn dwarf_symbolize_addresses(
             println!("BEGIN ADDRESS {} | {:016x}", address, address);
         }
 
-        let symbol_result =
-            dwarf_symbolize_address(&dwarf, object_filename, load_address, address, page_zero_vmsize, debug_mode);
+        let symbol_result = dwarf_symbolize_address(
+            &dwarf,
+            object_filename,
+            load_address,
+            address,
+            text_vmaddr,
+            debug_mode,
+        );
         if debug_mode {
             println!("RESULT:")
         }
@@ -161,8 +167,13 @@ fn dwarf_symbolize_addresses(
             Ok(symbol) => println!("{}", symbol),
             Err(_) => {
                 // downgrade to symbol table search
-                let symbol_result =
-                    symbol_symbolize_address(&object, object_filename, load_address, address, debug_mode);
+                let symbol_result = symbol_symbolize_address(
+                    &object,
+                    object_filename,
+                    load_address,
+                    address,
+                    debug_mode,
+                );
                 match symbol_result {
                     Ok(symbol) => println!("{}", symbol),
                     Err(err) => println!("N/A - {}", err),
@@ -177,16 +188,15 @@ fn dwarf_symbolize_addresses(
     Ok(())
 }
 
-
 fn dwarf_symbolize_address(
     dwarf: &Dwarf<EndianSlice<RunTimeEndian>>,
     object_filename: &str,
     load_address: u64,
     address: u64,
-    page_zero_vmsize: u64,
+    text_vmaddr: u64,
     debug_mode: bool,
 ) -> Result<String, anyhow::Error> {
-    let search_address = address - load_address + page_zero_vmsize;
+    let search_address = address - load_address + text_vmaddr;
 
     // aranges
     let mut debug_info_offset: Option<DebugInfoOffset> = None;
@@ -233,7 +243,7 @@ fn dwarf_symbolize_address(
                 let mut low_pc: Option<u64> = None;
                 let mut high_pc: Option<u64> = None;
                 if let Ok(Some(gimli::AttributeValue::Addr(lowpc_val))) =
-                entry.attr_value(gimli::DW_AT_low_pc)
+                    entry.attr_value(gimli::DW_AT_low_pc)
                 {
                     low_pc = Some(lowpc_val);
                     let high_pc_value = entry.attr_value(gimli::DW_AT_high_pc);
@@ -317,7 +327,7 @@ fn dwarf_symbolize_address(
     };
 
     if let (Some(symbol_name), Some(file_name), Some(line)) =
-    (found_symbol_name, found_file_name, found_line)
+        (found_symbol_name, found_file_name, found_line)
     {
         // expect format
         // main (in BinaryName) (main.m:100)
@@ -331,4 +341,3 @@ fn dwarf_symbolize_address(
     }
     Err(anyhow!("failed search symbol"))
 }
-
