@@ -14,6 +14,9 @@
 # usage
 
 ```
+🦀️atos for linux by rust - A partial replacement for Apple's atos tool for converting addresses
+within a binary file to symbols.
+
 USAGE:
     atosl [OPTIONS] -o <OBJECT_PATH> -l <LOAD_ADDRESS> [ADDRESSES]...
 
@@ -21,9 +24,13 @@ ARGS:
     <ADDRESSES>...    Addresses need to translate
 
 OPTIONS:
-    -l <LOAD_ADDRESS>        Load address of binary image
-    -o <OBJECT_PATH>         Symbol file path or binary file path
-
+    -l <LOAD_ADDRESS>            Load address of binary image
+    -o <OBJECT_PATH>             Symbol file path or binary file path
+    -d <DEBUG>                   Enable debug mode with extra output [default: 0]
+    -f <FILE_OFFSET_TYPE>        Addresses are file offsets (ignore vmaddr in __TEXT or other
+                                 executable segment) [default: 0]
+    -h, --help                   Print help information
+    -V, --version                Print version information
 ```
 
 
