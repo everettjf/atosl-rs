@@ -15,6 +15,7 @@ pub fn print_addresses(
     load_address: u64,
     addresses: Vec<u64>,
     debug_mode: bool,
+    file_offset_type: bool,
 ) -> Result<(), anyhow::Error> {
     let file = fs::File::open(&object_path)?;
     let mmap = unsafe { memmap::Mmap::map(&file)? };
@@ -35,6 +36,7 @@ pub fn print_addresses(
             load_address,
             addresses,
             debug_mode,
+            file_offset_type,
         )
     } else {
         if debug_mode {
@@ -46,6 +48,7 @@ pub fn print_addresses(
             load_address,
             addresses,
             debug_mode,
+            file_offset_type,
         )
     }
 }
@@ -64,15 +67,35 @@ fn symbol_symbolize_addresses(
     load_address: u64,
     addresses: Vec<u64>,
     debug_mode: bool,
+    file_offset_type: bool,
 ) -> Result<(), anyhow::Error> {
+    // find vmaddr for __TEXT segment
+    let mut segments = object.segments();
+    let mut text_vmaddr = 0;
+    while let Some(segment) = segments.next() {
+        if let Some(name) = segment.name()? {
+            if name == "__TEXT" {
+                text_vmaddr = segment.address();
+                break;
+            }
+        }
+    }
+
     for address in addresses {
         if debug_mode {
             println!("---------------------------------------------");
             println!("BEGIN ADDRESS {} | {:016x}", address, address);
         }
 
-        let symbol_result =
-            symbol_symbolize_address(&object, object_filename, load_address, address, debug_mode);
+        let symbol_result = symbol_symbolize_address(
+            &object,
+            object_filename,
+            load_address,
+            address,
+            text_vmaddr,
+            debug_mode,
+            file_offset_type,
+        );
         if debug_mode {
             println!("RESULT:")
         }
@@ -93,9 +116,15 @@ fn symbol_symbolize_address(
     object_filename: &str,
     load_address: u64,
     address: u64,
+    text_vmaddr: u64,
     _debug_mode: bool,
+    file_offset_type: bool,
 ) -> Result<String, anyhow::Error> {
-    let search_address = address - load_address;
+    let search_address: u64 = if file_offset_type {
+        address - load_address
+    } else {
+        address - load_address + text_vmaddr
+    };
 
     let symbols = object.symbol_map();
     let found_symbol = symbols.get(search_address);
@@ -118,6 +147,7 @@ fn dwarf_symbolize_addresses(
     load_address: u64,
     addresses: Vec<u64>,
     debug_mode: bool,
+    file_offset_type: bool,
 ) -> Result<(), anyhow::Error> {
     let endian = if object.is_little_endian() {
         gimli::RunTimeEndian::Little
@@ -135,12 +165,13 @@ fn dwarf_symbolize_addresses(
     })?;
     let dwarf = dwarf_cow.borrow(|section| gimli::EndianSlice::new((&*section).as_ref(), endian));
 
-    let mut segs = object.segments();
+    // find vmaddr for __TEXT segment
+    let mut segments = object.segments();
     let mut text_vmaddr = 0;
-    while let Some(seg) = segs.next() {
-        if let Some(name) = seg.name()? {
+    while let Some(segment) = segments.next() {
+        if let Some(name) = segment.name()? {
             if name == "__TEXT" {
-                text_vmaddr = seg.address();
+                text_vmaddr = segment.address();
                 break;
             }
         }
@@ -159,6 +190,7 @@ fn dwarf_symbolize_addresses(
             address,
             text_vmaddr,
             debug_mode,
+            file_offset_type,
         );
         if debug_mode {
             println!("RESULT:")
@@ -172,7 +204,9 @@ fn dwarf_symbolize_addresses(
                     object_filename,
                     load_address,
                     address,
+                    text_vmaddr,
                     debug_mode,
+                    file_offset_type,
                 );
                 match symbol_result {
                     Ok(symbol) => println!("{}", symbol),
@@ -195,8 +229,13 @@ fn dwarf_symbolize_address(
     address: u64,
     text_vmaddr: u64,
     debug_mode: bool,
+    file_offset_type: bool,
 ) -> Result<String, anyhow::Error> {
-    let search_address = address - load_address + text_vmaddr;
+    let search_address: u64 = if file_offset_type {
+        address - load_address
+    } else {
+        address - load_address + text_vmaddr
+    };
 
     // aranges
     let mut debug_info_offset: Option<DebugInfoOffset> = None;

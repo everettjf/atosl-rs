@@ -28,6 +28,10 @@ struct Args {
     /// Enable debug mode with extra output
     #[clap(short, default_value_t = 0)]
     debug: u8,
+
+    /// Addresses are file offsets (ignore vmaddr in __TEXT or other executable segment)
+    #[clap(short, default_value_t = 0)]
+    file_offset_type: u8,
 }
 
 fn parse_address_string(address: &str) -> Result<u64, anyhow::Error> {
@@ -45,12 +49,14 @@ fn main() {
     let args = Args::parse();
     let object_path = args.object_path.into_os_string().into_string().unwrap();
     let debug_mode = args.debug != 0;
+    let file_offset_type = args.file_offset_type != 0;
 
     let result = atosl::print_addresses(
         &object_path,
         args.load_address,
         args.addresses,
         debug_mode,
+        file_offset_type,
     );
     match result {
         Ok(..) => {}
