@@ -11,6 +11,16 @@
 2. cargo install atosl
 
 
+```bash
+# install guide for ubuntu
+sudo apt update
+sudo apt install git
+sudo apt install curl
+sudo apt install build-essential
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+cargo install atosl
+```
+
 # usage
 
 ```
