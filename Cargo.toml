@@ -4,6 +4,7 @@ version = "0.1.10"
 edition = "2021"
 description = "🦀️atos for linux by rust - A partial replacement for Apple's atos tool for converting addresses within a binary file to symbols."
 license = "MIT"
+repository = "https://github.com/everettjf/atols-rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
