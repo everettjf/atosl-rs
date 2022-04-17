@@ -1,6 +1,6 @@
 [package]
 name = "atosl"
-version = "0.1.12"
+version = "0.1.13"
 edition = "2021"
 description = "🦀️atos for linux by rust - A partial replacement for Apple's atos tool for converting addresses within a binary file to symbols."
 license = "MIT"
