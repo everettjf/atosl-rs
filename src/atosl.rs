@@ -333,7 +333,11 @@ fn dwarf_symbolize_address(
                     // got last filename and line
                     found_file_name = last_file_name.clone();
                     found_line = last_line;
-                    break;
+                    if let Some(line_no) = found_line {
+                        if line_no > 0 {
+                            break;
+                        }
+                    }
                 }
                 continue;
             }
@@ -352,7 +356,11 @@ fn dwarf_symbolize_address(
                 // got last filename and line
                 found_file_name = last_file_name.clone();
                 found_line = last_line;
-                break;
+                if let Some(line_no) = found_line {
+                    if line_no > 0 {
+                        break;
+                    }
+                }
             }
             last_line = Some(line);
         }
