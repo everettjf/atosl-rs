@@ -12,7 +12,13 @@
 
 
 ```bash
-# install guide for ubuntu
+# macOS install guide
+cargo install atosl
+```
+
+
+```bash
+# Ubuntu install guide
 sudo apt update
 sudo apt install git
 sudo apt install curl
