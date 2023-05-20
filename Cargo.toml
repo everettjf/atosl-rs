@@ -9,10 +9,10 @@ repository = "https://github.com/everettjf/atols-rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.51"
-clap = { version = "3.0.0", features = ["derive"] }
-gimli = "0.26.1"
+anyhow = "1.0.71"
+clap = { version = "3.2.25", features = ["derive"] }
+gimli = "0.27.2"
 memmap2 = "0.5.10"
-object = "0.28.1"
-symbolic-common = "8.5.0"
-symbolic-demangle = "8.5.0"
+object = "0.31.1"
+symbolic-common = "12.1.5"
+symbolic-demangle = "12.1.5"
