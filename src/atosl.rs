@@ -18,7 +18,7 @@ pub fn print_addresses(
     file_offset_type: bool,
 ) -> Result<(), anyhow::Error> {
     let file = fs::File::open(&object_path)?;
-    let mmap = unsafe { memmap::Mmap::map(&file)? };
+    let mmap = unsafe { memmap2::Mmap::map(&file)? };
     let object = object::File::parse(&*mmap)?;
     let object_filename = Path::new(&object_path)
         .file_name()
