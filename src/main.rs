@@ -6,17 +6,21 @@
 mod atosl;
 mod demangle;
 
-use std::io;
-use std::io::{BufRead, Write};
 use anyhow::Result;
 use clap::Parser;
+use std::io;
+use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[clap(about, version, author)]
 struct Args {
     /// Symbol file path or binary file path
-    #[clap(short, parse(from_os_str), default_value = "/Users/doude/code/rust/atosl-rs/examples/case1/RxDemo.app.dSYM/Contents/Resources/DWARF/RxDemo")]
+    #[clap(
+        short,
+        parse(from_os_str),
+        default_value = "/Users/doude/code/rust/atosl-rs/examples/case1/RxDemo.app.dSYM/Contents/Resources/DWARF/RxDemo"
+    )]
     object_path: PathBuf,
 
     /// Load address of binary image
@@ -63,11 +67,13 @@ fn main() {
         stdout.flush().expect("Failed to flush stdout");
         // 读取用户输入的内容
         let mut input = String::new();
-        stdin.lock().read_line(&mut input).expect("Failed to read line");
+        stdin
+            .lock()
+            .read_line(&mut input)
+            .expect("Failed to read line");
         // 去除输入内容两端的空格和换行符
         let input = input.trim();
         let split: Vec<&str> = input.split_whitespace().collect();
-
 
         // 根据用户输入选择相应的操作
         match input {
@@ -90,5 +96,3 @@ fn main() {
         }
     }
 }
-
-

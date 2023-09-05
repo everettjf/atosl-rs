@@ -7,11 +7,10 @@ use crate::demangle;
 use anyhow::{anyhow, Result};
 use gimli::{DW_TAG_subprogram, DebugInfoOffset, Dwarf, EndianSlice, RunTimeEndian};
 use object::{File, Object, ObjectSection, ObjectSegment};
-use std::path::Path;
-use std::{borrow, fs};
 use std::io::Cursor;
+use std::path::Path;
 use std::sync::Arc;
-
+use std::{borrow, fs};
 
 pub fn init_file_obj(object_path: &str) -> Result<(), anyhow::Error> {
     MAPPED_OBJECT_FILE.lock().unwrap();
@@ -24,9 +23,9 @@ pub struct MappedObjectFile {
     file_name: String,
 }
 
-use std::sync::Mutex;
 use lazy_static::lazy_static;
 use std::env;
+use std::sync::Mutex;
 
 lazy_static! {
     pub static ref MAPPED_OBJECT_FILE: Mutex<MappedObjectFile> = Mutex::new({

@@ -13,7 +13,6 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          components: rustfmt, clippy
+          toolchain: stable
       - name: Build
         run: cargo build --release
-    # 添加其他需要的步骤，例如测试、部署等
