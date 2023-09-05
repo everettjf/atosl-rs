@@ -1,8 +1,10 @@
 name: Publish
 on:
   push:
-    branches:
-      - main  # 更改为你的主分支
+#    branches:
+#      - main  # 更改为你的主分支
+    tags:
+      - 'v*'
 permissions: write-all
 jobs:
   build:
@@ -11,10 +13,10 @@ jobs:
       - uses: actions/checkout@v3
 #      - name: Build
 #        run: cargo build --release
-      - name: Build for M1
-        run: |
-          mkdir -p target/m1
-          CARGO_TARGET_DIR=target/m1 cargo build --release --target=aarch64-apple-darwin
+#      - name: Build for M1
+#        run: |
+#          mkdir -p target/m1
+#          CARGO_TARGET_DIR=target/m1 cargo build --release --target=aarch64-apple-darwin
       - name: Build for AMD64
         run: |
           mkdir -p target/amd64
@@ -22,20 +24,17 @@ jobs:
       - name: Move binaries
         run: |
           mkdir -p .bin
-          ls target/m1/release/
           ls target/amd64/release/
-          mv target/m1/release/atosl .bin/atosl-m1
-          mv target/amd64/release/atosl .bin/atosl-amd
-#          mv -v target/release/* .bin/
-      - name: Get Current Timestamp
-        id: timestamp
-        run: echo "::set-output name=timestamp::$(date +%s)"
+          mv target/amd64/release/atosl .bin/atosl-linux-amd64-${{ github.ref }}
+#      - name: Get Current Timestamp
+#        id: timestamp
+#        run: echo "::set-output name=timestamp::$(date +%s)"
       - name: Upload binaries to release
         uses: svenstaro/upload-release-action@2.4.0
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: .bin/*
-#          asset_name: atosl-amd
-          tag: v0.1.0-${{ steps.timestamp.outputs.timestamp }}
+          file: .bin/atosl-linux-amd64-${{ github.ref }}
+          asset_name: atosl-linux-amd64-${{ github.ref }}
+#          tag: v0.1.0-${{ steps.timestamp.outputs.timestamp }}
           overwrite: true
           body: "This is my release text"
