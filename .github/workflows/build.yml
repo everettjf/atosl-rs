@@ -35,7 +35,7 @@ jobs:
         uses: svenstaro/upload-release-action@2.4.0
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ./bin/*
+          file: .bin/*
           asset_name: atosl-v0.1.0-${{ steps.timestamp.outputs.timestamp }}
           tag: v0.1.0-${{ steps.timestamp.outputs.timestamp }}
           overwrite: true
@@ -49,6 +49,6 @@ jobs:
 #          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 #        with:
 #          upload_url: ${{ steps.create_release.outputs.upload_url }}
-#          asset_path: ./bin/atosl-main  # 替换为你的构建生成的文件路
+#          asset_path: ./.bin/atosl-main  # 替换为你的构建生成的文件路
 #          asset_name: atosl-main  # 替换为你的构建生成的文件名
 #          asset_content_type: application/octet-stream

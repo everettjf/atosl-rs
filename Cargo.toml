@@ -18,7 +18,7 @@ symbolic-common = "8.5.0"
 symbolic-demangle = "8.5.0"
 lazy_static = "1.4.0"
 
-#[bin]
+#[.bin]
 #name = "atosl-rs"
 #path = "src/main.rs"
 #args = ["-o", "/Users/doude/code/rust/atosl-rs/examples/case1/RxDemo.app.dSYM/Contents/Resources/DWARF/RxDemo","-l","0x102c18000 0x0000000102c1ed50"]
