@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - main  # 更改为你的主分支
+permissions: write-all
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -27,8 +28,6 @@ jobs:
         with:
           tag_name: v0.1.0-${{ steps.timestamp.outputs.timestamp }}
           release_name: Release v0.1.0-${{ steps.timestamp.outputs.timestamp }}
-#          tag_name: main  # 修改为你的标签名称
-#          release_name: Release main
 #          tag_name: ${{ github.ref }}
 #          release_name: Release ${{ github.ref }}
       - name: Upload Asset
