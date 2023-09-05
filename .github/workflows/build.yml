@@ -11,18 +11,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - name: Build for AMD64
-        run: cargo build --release --target=x86_64-unknown-linux-gnu
+      - name: Build
+        run: cargo build --release
       - name: Move binaries
         run: |
           mkdir -p .bin
-          ls -al target/release/
-          mv target/release/atosl .bin/atosl-linux-amd64-${{ github.ref }}
+          ls target/release/
+          mv -v target/release/* .bin/
+      - name: Get Current Timestamp
+        id: timestamp
+        run: echo "::set-output name=timestamp::$(date +%s)"
       - name: Upload binaries to release
         uses: svenstaro/upload-release-action@2.4.0
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: .bin/atosl-linux-amd64-${{ github.ref }}
+          file: .bin/atosl
           asset_name: atosl-linux-amd64-${{ github.ref }}
 #          tag: v0.1.0-${{ steps.timestamp.outputs.timestamp }}
           overwrite: true
