@@ -9,28 +9,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-#      - name: Install Rust
-#        uses: actions-rs/toolchain@v1
-#        with:
-#          profile: minimal
-#          toolchain: stable
+
       - name: Build
         run: cargo build --release
-
       - name: Get Current Timestamp
         id: timestamp
         run: echo "::set-output name=timestamp::$(date +%s)"
-#      - name: Create Release
-#        id: create_release
-#        uses: actions/create-release@v1
-#        env:
-#          GITHUB_TOKEN: ${{ secrets.BUILD_RELEASE }}
-#        with:
-#          tag_name: v0.1.0-${{ steps.timestamp.outputs.timestamp }}
-#          release_name: Release v0.1.0-${{ steps.timestamp.outputs.timestamp }}
-#          tag_name: ${{ github.ref }}
-#          release_name: Release ${{ github.ref }}
-
+      - name: Move binaries
+        run: |
+#          mkdir -p .bin
+          mv target/release/* .bin/
       - name: Upload binaries to release
         uses: svenstaro/upload-release-action@2.4.0
         with:
