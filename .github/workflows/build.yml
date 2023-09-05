@@ -12,7 +12,10 @@ jobs:
       - name: Build
         run: cargo build --release
       - name: Move binaries
-        run: mv target/release/* .bin/
+        run: |
+          mkdir -p .bin
+          ls target/release/
+          mv -v target/release/* .bin/
       - name: Get Current Timestamp
         id: timestamp
         run: echo "::set-output name=timestamp::$(date +%s)"
