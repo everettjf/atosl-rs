@@ -6,6 +6,8 @@
 mod atosl;
 mod demangle;
 
+use std::io;
+use std::io::{BufRead, Write};
 use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
@@ -14,15 +16,15 @@ use std::path::PathBuf;
 #[clap(about, version, author)]
 struct Args {
     /// Symbol file path or binary file path
-    #[clap(short, parse(from_os_str))]
+    #[clap(short, parse(from_os_str), default_value = "/Users/doude/code/rust/atosl-rs/examples/case1/RxDemo.app.dSYM/Contents/Resources/DWARF/RxDemo")]
     object_path: PathBuf,
 
     /// Load address of binary image
-    #[clap(short, parse(try_from_str = parse_address_string))]
+    #[clap(short, parse(try_from_str = parse_address_string), default_value = "0x102c18000")]
     load_address: u64,
 
     /// Addresses need to translate
-    #[clap(parse(try_from_str = parse_address_string))]
+    #[clap(parse(try_from_str = parse_address_string), default_value = "0x0000000102c1ed50")]
     addresses: Vec<u64>,
 
     /// Enable verbose mode with extra output
@@ -45,19 +47,48 @@ fn parse_address_string(address: &str) -> Result<u64, anyhow::Error> {
     }
 }
 
+//  atosl -o /Users/doude/code/rust/atosl-rs/examples/case1/RxDemo.app.dSYM/Contents/Resources/DWARF/RxDemo  -l 0x102c18000 0x0000000102c1ed50
 fn main() {
     let args = Args::parse();
     let object_path = args.object_path.into_os_string().into_string().unwrap();
+    let x = crate::atosl::init_file_obj(&object_path).unwrap();
+    // 创建标准输入流的读取器和标准输出流
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+    let x: String = String::new();
+    x.split("\n");
+    loop {
+        // 打印提示信息
+        write!(stdout, "你：").expect("Failed to write to stdout");
+        stdout.flush().expect("Failed to flush stdout");
+        // 读取用户输入的内容
+        let mut input = String::new();
+        stdin.lock().read_line(&mut input).expect("Failed to read line");
+        // 去除输入内容两端的空格和换行符
+        let input = input.trim();
+        let split: Vec<&str> = input.split_whitespace().collect();
 
-    let result = atosl::print_addresses(
-        &object_path,
-        args.load_address,
-        args.addresses,
-        args.verbose,
-        args.file_offset_type,
-    );
-    match result {
-        Ok(..) => {}
-        Err(err) => println!("{}", err),
+
+        // 根据用户输入选择相应的操作
+        match input {
+            "exit" => {
+                println!("对话结束");
+                break;
+            }
+            _ => {
+                let result = atosl::print_addresses(
+                    parse_address_string(split[0]).unwrap(),
+                    vec![parse_address_string(split[1]).unwrap()],
+                    args.verbose,
+                    args.file_offset_type,
+                );
+                match result {
+                    Ok(..) => {}
+                    Err(err) => println!("{}", err),
+                }
+            }
+        }
     }
 }
+
+

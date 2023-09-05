@@ -1,0 +1,19 @@
+name: Build
+on:
+  push:
+    branches:
+      - main  # 更改为你的主分支
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Rust
+        uses: actions/checkout@v2
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          components: rustfmt, clippy
+      - name: Build
+        run: cargo build --release
+    # 添加其他需要的步骤，例如测试、部署等

@@ -16,3 +16,11 @@ memmap = "0.7.0"
 object = "0.28.1"
 symbolic-common = "8.5.0"
 symbolic-demangle = "8.5.0"
+lazy_static = "1.4.0"
+
+#[bin]
+#name = "atosl-rs"
+#path = "src/main.rs"
+#args = ["-o", "/Users/doude/code/rust/atosl-rs/examples/case1/RxDemo.app.dSYM/Contents/Resources/DWARF/RxDemo","-l","0x102c18000 0x0000000102c1ed50"]
+
+#-o /Users/doude/code/rust/atosl-rs/examples/case1/RxDemo.app.dSYM/Contents/Resources/DWARF/RxDemo  -l 0x102c18000 0x0000000102c1ed50

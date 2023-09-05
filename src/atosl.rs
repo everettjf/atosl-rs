@@ -6,32 +6,71 @@
 use crate::demangle;
 use anyhow::{anyhow, Result};
 use gimli::{DW_TAG_subprogram, DebugInfoOffset, Dwarf, EndianSlice, RunTimeEndian};
-use object::{Object, ObjectSection, ObjectSegment};
+use object::{File, Object, ObjectSection, ObjectSegment};
 use std::path::Path;
 use std::{borrow, fs};
+use std::io::Cursor;
+use std::sync::Arc;
 
+
+pub fn init_file_obj(object_path: &str) -> Result<(), anyhow::Error> {
+    MAPPED_OBJECT_FILE.lock().unwrap();
+    Ok(())
+}
+
+pub struct MappedObjectFile {
+    mmap: memmap::Mmap,
+    object_file: object::File<'static>,
+    file_name: String,
+}
+
+use std::sync::Mutex;
+use lazy_static::lazy_static;
+use std::env;
+
+lazy_static! {
+    pub static ref MAPPED_OBJECT_FILE: Mutex<MappedObjectFile> = Mutex::new({
+       // let key = env::var("KEY").unwrap();
+        let object_path = env::var("atosl_resource_file").unwrap();
+        let file = fs::File::open(&object_path).unwrap();
+        let mmap = unsafe { memmap::Mmap::map(&file).unwrap() };
+        let mmap = unsafe { memmap::Mmap::map(&file).unwrap() };
+        let bytes = unsafe { std::slice::from_raw_parts(mmap.as_ptr(), mmap.len()) };
+        let object = object::File::parse(bytes).unwrap();
+        // Create a new file handle and mmap it for the object::File
+        let file_for_object = fs::File::open(&object_path).unwrap();
+        let mmap_for_object = unsafe { memmap::Mmap::map(&file_for_object).unwrap() };
+        // let object = object::File::parse(mmap_for_object).unwrap();
+        let object_filename = Path::new(&object_path)
+            .file_name()
+            .expect("file name error")
+            .to_str()
+            .expect("file name error(to_str)");
+        let mapped_object_file = MappedObjectFile {
+            mmap,
+            object_file: object,
+            file_name: object_filename.to_string()
+        };
+        mapped_object_file
+    });
+}
 pub fn print_addresses(
-    object_path: &str,
+    // object: &File,
+    // object_filename: &str,
     load_address: u64,
     addresses: Vec<u64>,
     verbose: bool,
     file_offset_type: bool,
 ) -> Result<(), anyhow::Error> {
-    let file = fs::File::open(&object_path)?;
-    let mmap = unsafe { memmap::Mmap::map(&file)? };
-    let object = object::File::parse(&*mmap)?;
-    let object_filename = Path::new(&object_path)
-        .file_name()
-        .ok_or(anyhow!("file name error"))?
-        .to_str()
-        .ok_or(anyhow!("file name error(to_str)"))?;
-
-    if is_object_dwarf(&object) {
+    let mut mapped_object_file = MAPPED_OBJECT_FILE.lock().unwrap();
+    let object_filename = mapped_object_file.file_name.as_str();
+    let object = &mapped_object_file.object_file;
+    if is_object_dwarf(object) {
         if verbose {
             println!("dwarf");
         }
         dwarf_symbolize_addresses(
-            &object,
+            object,
             object_filename,
             load_address,
             addresses,
@@ -43,7 +82,7 @@ pub fn print_addresses(
             println!("symbols");
         }
         symbol_symbolize_addresses(
-            &object,
+            object,
             object_filename,
             load_address,
             addresses,

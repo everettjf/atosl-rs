@@ -21,6 +21,7 @@ dependencies = [
  "anyhow",
  "clap",
  "gimli",
+ "lazy_static",
  "memmap",
  "object",
  "symbolic-common",
