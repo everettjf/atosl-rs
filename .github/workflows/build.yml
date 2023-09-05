@@ -22,8 +22,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.BUILD_RELEASE }}
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
+          tag_name: main  # 修改为你的标签名称
+          release_name: Release main
+#          tag_name: ${{ github.ref }}
+#          release_name: Release ${{ github.ref }}
       - name: Upload Asset
         id: upload_asset
         uses: actions/upload-release-asset@v1
