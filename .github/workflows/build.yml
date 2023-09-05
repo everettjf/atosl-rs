@@ -23,8 +23,8 @@ jobs:
         uses: svenstaro/upload-release-action@2.4.0
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: .bin/*
-          asset_name: atosl-v0.1.0-${{ steps.timestamp.outputs.timestamp }}
+          file: .bin/atosl
+          asset_name: atosl
           tag: v0.1.0-${{ steps.timestamp.outputs.timestamp }}
           overwrite: true
           #file_glob: true
