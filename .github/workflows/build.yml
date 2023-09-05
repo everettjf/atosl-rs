@@ -12,14 +12,13 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Build for AMD64
-        run: |
-          cargo build --release --target=x86_64-unknown-linux-gnu
+        run: cargo build --release --target=x86_64-unknown-linux-gnu
       - name: Move binaries
         run: |
           mkdir -p .bin
           ls target/release/
           mv target/release/atosl .bin/atosl-linux-amd64-${{ github.ref }}
-        uses: svenstaro/upload-release-action@2.4.0
+      - uses: svenstaro/upload-release-action@2.4.0
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: .bin/atosl-linux-amd64-${{ github.ref }}
