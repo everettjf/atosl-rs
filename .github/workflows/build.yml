@@ -16,7 +16,7 @@ jobs:
       - name: Move binaries
         run: |
           mkdir -p .bin
-          ls target/release/
+          ls -al target/release/
           mv target/release/atosl .bin/atosl-linux-amd64-${{ github.ref }}
       - uses: svenstaro/upload-release-action@2.4.0
         with:
