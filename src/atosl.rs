@@ -10,7 +10,9 @@ use object::{File, Object, ObjectSection, ObjectSegment};
 use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
-use std::{borrow, fs};
+use std::{borrow, env, fs};
+use lazy_static::lazy_static;
+
 
 pub fn init_file_obj(object_path: &str) -> Result<(), anyhow::Error> {
     MAPPED_OBJECT_FILE.lock().unwrap();
@@ -22,15 +24,11 @@ pub struct MappedObjectFile {
     object_file: object::File<'static>,
     file_name: String,
 }
-
-use lazy_static::lazy_static;
-use std::env;
 use std::sync::Mutex;
 
 lazy_static! {
     pub static ref MAPPED_OBJECT_FILE: Mutex<MappedObjectFile> = Mutex::new({
-       // let key = env::var("KEY").unwrap();
-        let object_path = env::var("atosl_resource_file").unwrap();
+        let object_path = env::var("atosl_resource_file").expect("env atosl_resource_file not defined");
         let file = fs::File::open(&object_path).unwrap();
         let mmap = unsafe { memmap::Mmap::map(&file).unwrap() };
         let mmap = unsafe { memmap::Mmap::map(&file).unwrap() };

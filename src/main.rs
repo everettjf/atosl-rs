@@ -17,9 +17,9 @@ use std::path::PathBuf;
 struct Args {
     /// Symbol file path or binary file path
     #[clap(
-        short,
-        parse(from_os_str),
-        default_value = "/Users/doude/code/rust/atosl-rs/examples/case1/RxDemo.app.dSYM/Contents/Resources/DWARF/RxDemo"
+    short,
+    parse(from_os_str),
+    default_value = "/Users/doude/code/rust/atosl-rs/examples/case1/RxDemo.app.dSYM/Contents/Resources/DWARF/RxDemo"
     )]
     object_path: PathBuf,
 
@@ -63,7 +63,7 @@ fn main() {
     x.split("\n");
     loop {
         // 打印提示信息
-        write!(stdout, "你：").expect("Failed to write to stdout");
+        write!(stdout, "user：").expect("Failed to write to stdout");
         stdout.flush().expect("Failed to flush stdout");
         // 读取用户输入的内容
         let mut input = String::new();
@@ -82,15 +82,26 @@ fn main() {
                 break;
             }
             _ => {
-                let result = atosl::print_addresses(
-                    parse_address_string(split[0]).unwrap(),
-                    vec![parse_address_string(split[1]).unwrap()],
-                    args.verbose,
-                    args.file_offset_type,
-                );
-                match result {
-                    Ok(..) => {}
-                    Err(err) => println!("{}", err),
+                if split.len() != 2 {
+                    println!("got_err command args 「{}」 is invalid, just two hex data", input)
+                } else {
+                    let load_address = parse_address_string(split[0]);
+                    let address_arr = parse_address_string(split[1]);
+                    if load_address.is_ok() && address_arr.is_ok() {
+                        vec![parse_address_string(split[1]).unwrap()];
+                        let result = atosl::print_addresses(
+                            load_address.unwrap(),
+                            vec![address_arr.unwrap()],
+                            args.verbose,
+                            args.file_offset_type,
+                        );
+                        match result {
+                            Ok(..) => {}
+                            Err(err) => println!("{}", err),
+                        }
+                    } else {
+                        println!("got_err command args  「{}」 ,「{}」  is invalid, ", split[0], split[1])
+                    }
                 }
             }
         }
