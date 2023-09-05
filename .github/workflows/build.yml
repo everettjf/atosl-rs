@@ -16,14 +16,19 @@ jobs:
           toolchain: stable
       - name: Build
         run: cargo build --release
+      - name: Get Current Timestamp
+        id: timestamp
+        run: echo "::set-output name=timestamp::$(date +%s)"
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.BUILD_RELEASE }}
         with:
-          tag_name: main  # 修改为你的标签名称
-          release_name: Release main
+          tag_name: v0.1.0-${{ steps.timestamp.outputs.timestamp }}
+          release_name: Release v0.1.0-${{ steps.timestamp.outputs.timestamp }}
+#          tag_name: main  # 修改为你的标签名称
+#          release_name: Release main
 #          tag_name: ${{ github.ref }}
 #          release_name: Release ${{ github.ref }}
       - name: Upload Asset
