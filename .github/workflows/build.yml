@@ -18,7 +18,8 @@ jobs:
           mkdir -p .bin
           ls -al target/release/
           mv target/release/atosl .bin/atosl-linux-amd64-${{ github.ref }}
-      - uses: svenstaro/upload-release-action@2.4.0
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@2.4.0
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: .bin/atosl-linux-amd64-${{ github.ref }}
