@@ -23,7 +23,7 @@ pub fn print_addresses(
 ) -> Result<(), anyhow::Error> {
     let file = fs::File::open(object_path)
         .with_context(|| format!("failed to open object file: {}", object_path.display()))?;
-    let mmap = unsafe { memmap::Mmap::map(&file)? };
+    let mmap = unsafe { memmap2::Mmap::map(&file)? };
     let object_filename = object_path
         .file_name()
         .ok_or_else(|| {

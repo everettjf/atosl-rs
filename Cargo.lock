@@ -21,7 +21,7 @@ dependencies = [
  "anyhow",
  "clap",
  "gimli",
- "memmap",
+ "memmap2",
  "object",
  "symbolic-common",
  "symbolic-demangle",
@@ -185,6 +185,15 @@ checksum = "6585fd95e7bb50d6cc31e20d4cf9afb4e2ba16c5846fc76793f11218da9c475b"
 dependencies = [
  "libc",
  "winapi",
+]
+
+[[package]]
+name = "memmap2"
+version = "0.5.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83faa42c0a078c393f6b29d5db232d8be22776a891f8f56e5284faee4a20b327"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
