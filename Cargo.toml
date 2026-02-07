@@ -15,7 +15,7 @@ categories = ["command-line-utilities", "development-tools::debugging"]
 
 [dependencies]
 anyhow = "1.0.51"
-clap = { version = "3.0.0", features = ["derive"] }
+clap = { version = "3.0.0", default-features = false, features = ["derive", "std"] }
 gimli = "0.26.1"
 memmap = "0.7.0"
 object = "0.28.1"
