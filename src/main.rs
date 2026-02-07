@@ -33,6 +33,14 @@ struct Args {
     /// Addresses are file offsets (ignore vmaddr in __TEXT or other executable segment)
     #[clap(short)]
     file_offset_type: bool,
+
+    /// Select architecture for Mach-O universal/fat files (e.g. arm64, arm64e, armv7, x86_64, i386)
+    #[clap(short = 'a', long)]
+    arch: Option<String>,
+
+    /// Select Mach-O slice by UUID (format: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX)
+    #[clap(long)]
+    uuid: Option<String>,
 }
 
 fn parse_address_string(address: &str) -> Result<u64, anyhow::Error> {
@@ -56,6 +64,8 @@ fn main() {
         &args.addresses,
         args.verbose,
         args.file_offset_type,
+        args.arch.as_deref(),
+        args.uuid.as_deref(),
     );
     match result {
         Ok(..) => {}

@@ -6,6 +6,8 @@
 use crate::demangle;
 use anyhow::{anyhow, Context, Result};
 use gimli::{DW_TAG_subprogram, DebugInfoOffset, Dwarf, EndianSlice, RunTimeEndian};
+use object::macho;
+use object::read::macho::{FatArch, FatHeader};
 use object::{Object, ObjectSection, ObjectSegment};
 use std::path::Path;
 use std::{borrow, fs};
@@ -16,11 +18,12 @@ pub fn print_addresses(
     addresses: &[u64],
     verbose: bool,
     file_offset_type: bool,
+    arch_filter: Option<&str>,
+    uuid_filter: Option<&str>,
 ) -> Result<(), anyhow::Error> {
     let file = fs::File::open(object_path)
         .with_context(|| format!("failed to open object file: {}", object_path.display()))?;
     let mmap = unsafe { memmap::Mmap::map(&file)? };
-    let object = object::File::parse(&*mmap)?;
     let object_filename = object_path
         .file_name()
         .ok_or_else(|| {
@@ -32,13 +35,40 @@ pub fn print_addresses(
         .to_string_lossy()
         .to_string();
 
-    if is_object_dwarf(&object) {
+    let parsed_uuid_filter = uuid_filter.map(parse_uuid_string).transpose()?;
+    let (object, selected_slice) =
+        resolve_object_from_data(&mmap, arch_filter, parsed_uuid_filter, verbose)?;
+    if verbose {
+        if let Some(selected_slice) = selected_slice {
+            println!("selected_slice: {selected_slice}");
+        }
+    }
+
+    print_addresses_for_object(
+        &object,
+        &object_filename,
+        load_address,
+        addresses,
+        verbose,
+        file_offset_type,
+    )
+}
+
+fn print_addresses_for_object(
+    object: &object::File,
+    object_filename: &str,
+    load_address: u64,
+    addresses: &[u64],
+    verbose: bool,
+    file_offset_type: bool,
+) -> Result<(), anyhow::Error> {
+    if is_object_dwarf(object) {
         if verbose {
             println!("resolver: dwarf");
         }
         dwarf_symbolize_addresses(
-            &object,
-            &object_filename,
+            object,
+            object_filename,
             load_address,
             addresses,
             verbose,
@@ -49,13 +79,270 @@ pub fn print_addresses(
             println!("resolver: symbol_table");
         }
         symbol_symbolize_addresses(
-            &object,
-            &object_filename,
+            object,
+            object_filename,
             load_address,
             addresses,
             verbose,
             file_offset_type,
         )
+    }
+}
+
+struct FatSlice<'data> {
+    object: object::File<'data, &'data [u8]>,
+    arch_name: String,
+    uuid: Option<[u8; 16]>,
+}
+
+fn resolve_object_from_data<'data>(
+    data: &'data [u8],
+    arch_filter: Option<&str>,
+    uuid_filter: Option<[u8; 16]>,
+    verbose: bool,
+) -> Result<(object::File<'data, &'data [u8]>, Option<String>), anyhow::Error> {
+    let kind = object::FileKind::parse(data)?;
+    match kind {
+        object::FileKind::MachOFat32 => {
+            let arches = FatHeader::parse_arch32(data)?;
+            select_fat_slice(arches, data, arch_filter, uuid_filter, verbose)
+        }
+        object::FileKind::MachOFat64 => {
+            let arches = FatHeader::parse_arch64(data)?;
+            select_fat_slice(arches, data, arch_filter, uuid_filter, verbose)
+        }
+        _ => {
+            let file = object::File::parse(data)?;
+            validate_non_fat_filters(&file, arch_filter, uuid_filter)?;
+            Ok((file, None))
+        }
+    }
+}
+
+fn validate_non_fat_filters(
+    file: &object::File,
+    arch_filter: Option<&str>,
+    uuid_filter: Option<[u8; 16]>,
+) -> Result<(), anyhow::Error> {
+    if let Some(uuid_filter) = uuid_filter {
+        let actual_uuid = file
+            .mach_uuid()?
+            .ok_or_else(|| anyhow!("--uuid was provided, but this file has no Mach-O UUID"))?;
+        if actual_uuid != uuid_filter {
+            return Err(anyhow!(
+                "uuid mismatch: requested {}, actual {}",
+                format_uuid(uuid_filter),
+                format_uuid(actual_uuid)
+            ));
+        }
+    }
+
+    if let Some(arch_filter) = arch_filter {
+        let architecture = file.architecture();
+        let matches = architecture_matches_filter(architecture, arch_filter);
+        if !matches {
+            return Err(anyhow!(
+                "architecture mismatch: requested '{}', actual '{:?}'",
+                arch_filter,
+                architecture
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn select_fat_slice<'data, A: FatArch>(
+    arches: &'data [A],
+    data: &'data [u8],
+    arch_filter: Option<&str>,
+    uuid_filter: Option<[u8; 16]>,
+    verbose: bool,
+) -> Result<(object::File<'data, &'data [u8]>, Option<String>), anyhow::Error> {
+    let mut slices = Vec::with_capacity(arches.len());
+    for arch in arches {
+        let cputype = arch.cputype();
+        let cpusubtype = arch.cpusubtype();
+        let arch_name = format_macho_arch_name(cputype, cpusubtype);
+        let arch_data = arch.data(data)?;
+        let object = object::File::parse(arch_data)?;
+        let uuid = object.mach_uuid()?;
+        slices.push(FatSlice {
+            object,
+            arch_name,
+            uuid,
+        });
+    }
+
+    if verbose {
+        for slice in &slices {
+            let uuid_str = slice
+                .uuid
+                .map(format_uuid)
+                .unwrap_or_else(|| "-".to_string());
+            println!("fat_slice: arch={} uuid={}", slice.arch_name, uuid_str);
+        }
+    }
+
+    if slices.is_empty() {
+        return Err(anyhow!("fat Mach-O has no slices"));
+    }
+
+    if arch_filter.is_none() && uuid_filter.is_none() {
+        if slices.len() == 1 {
+            let slice = slices.into_iter().next().expect("slice len checked");
+            let selected = Some(format_selected_slice(&slice.arch_name, slice.uuid));
+            return Ok((slice.object, selected));
+        }
+        return Err(anyhow!(
+            "fat Mach-O contains multiple slices.\nUse -a/--arch or --uuid to select one.\nAvailable slices:\n{}",
+            format_available_slices(&slices)
+        ));
+    }
+
+    let available_slices = format_available_slices(&slices);
+    let mut matches = slices
+        .into_iter()
+        .filter(|slice| {
+            let arch_ok = arch_filter
+                .map(|filter| macho_arch_matches_filter(&slice.arch_name, filter))
+                .unwrap_or(true);
+            let uuid_ok = uuid_filter
+                .map(|uuid| slice.uuid == Some(uuid))
+                .unwrap_or(true);
+            arch_ok && uuid_ok
+        })
+        .collect::<Vec<_>>();
+
+    match matches.len() {
+        0 => Err(anyhow!(
+            "no fat Mach-O slice matched arch={:?} uuid={:?}.\nAvailable slices:\n{}",
+            arch_filter,
+            uuid_filter.map(format_uuid),
+            available_slices
+        )),
+        1 => {
+            let slice = matches.pop().expect("slice len checked");
+            let selected = Some(format_selected_slice(&slice.arch_name, slice.uuid));
+            Ok((slice.object, selected))
+        }
+        _ => {
+            let available = matches
+                .iter()
+                .map(|slice| format_selected_slice(&slice.arch_name, slice.uuid))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Err(anyhow!(
+                "filters are ambiguous and matched multiple slices:\n{}",
+                available
+            ))
+        }
+    }
+}
+
+fn format_available_slices(slices: &[FatSlice]) -> String {
+    slices
+        .iter()
+        .map(|slice| format_selected_slice(&slice.arch_name, slice.uuid))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn format_selected_slice(arch_name: &str, uuid: Option<[u8; 16]>) -> String {
+    let uuid = uuid.map(format_uuid).unwrap_or_else(|| "-".to_string());
+    format!("- arch={arch_name} uuid={uuid}")
+}
+
+fn parse_uuid_string(value: &str) -> Result<[u8; 16], anyhow::Error> {
+    let hex = value
+        .chars()
+        .filter(|c| *c != '-')
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if hex.len() != 32 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(anyhow!(
+            "invalid uuid format: '{value}', expected 32 hex chars (with or without '-')"
+        ));
+    }
+
+    let mut out = [0u8; 16];
+    for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
+        let byte_str = std::str::from_utf8(chunk)?;
+        out[i] = u8::from_str_radix(byte_str, 16)?;
+    }
+    Ok(out)
+}
+
+fn format_uuid(uuid: [u8; 16]) -> String {
+    let hex = uuid
+        .iter()
+        .map(|b| format!("{:02X}", b))
+        .collect::<String>();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
+fn normalize_arch(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>()
+}
+
+fn architecture_matches_filter(architecture: object::Architecture, arch_filter: &str) -> bool {
+    let filter = normalize_arch(arch_filter);
+    match filter.as_str() {
+        "arm" | "armv7" | "armv7s" | "armv7k" => architecture == object::Architecture::Arm,
+        "arm64" | "arm64e" | "aarch64" => architecture == object::Architecture::Aarch64,
+        "x8664" | "x64" | "amd64" | "x8664h" => architecture == object::Architecture::X86_64,
+        "x86" | "i386" => architecture == object::Architecture::I386,
+        _ => false,
+    }
+}
+
+fn macho_arch_matches_filter(arch_name: &str, arch_filter: &str) -> bool {
+    let actual = normalize_arch(arch_name);
+    let filter = normalize_arch(arch_filter);
+    if actual == filter {
+        return true;
+    }
+    matches!(
+        (actual.as_str(), filter.as_str()),
+        ("arm64", "aarch64")
+            | ("aarch64", "arm64")
+            | ("x8664", "amd64")
+            | ("x8664", "x64")
+            | ("i386", "x86")
+    )
+}
+
+fn format_macho_arch_name(cputype: u32, cpusubtype: u32) -> String {
+    let cpusubtype = cpusubtype & !macho::CPU_SUBTYPE_MASK;
+    match cputype {
+        macho::CPU_TYPE_ARM64 => match cpusubtype {
+            macho::CPU_SUBTYPE_ARM64E => "arm64e".to_string(),
+            _ => "arm64".to_string(),
+        },
+        macho::CPU_TYPE_ARM => match cpusubtype {
+            macho::CPU_SUBTYPE_ARM_V7 => "armv7".to_string(),
+            macho::CPU_SUBTYPE_ARM_V7F => "armv7f".to_string(),
+            macho::CPU_SUBTYPE_ARM_V7S => "armv7s".to_string(),
+            macho::CPU_SUBTYPE_ARM_V7K => "armv7k".to_string(),
+            macho::CPU_SUBTYPE_ARM_V8 => "armv8".to_string(),
+            _ => "arm".to_string(),
+        },
+        macho::CPU_TYPE_X86_64 => match cpusubtype {
+            macho::CPU_SUBTYPE_X86_64_H => "x86_64h".to_string(),
+            _ => "x86_64".to_string(),
+        },
+        macho::CPU_TYPE_X86 => "i386".to_string(),
+        _ => format!("cputype{}_subtype{}", cputype, cpusubtype),
     }
 }
 
@@ -389,4 +676,30 @@ fn dwarf_symbolize_address(
         return Ok(symbolize_result);
     }
     Err(anyhow!("failed search symbol"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_uuid_accepts_hyphenated_and_plain() {
+        let a = parse_uuid_string("29118F18-9DFC-36A8-9028-A19B13996D5E").unwrap();
+        let b = parse_uuid_string("29118f189dfc36a89028a19b13996d5e").unwrap();
+        assert_eq!(a, b);
+        assert_eq!(format_uuid(a), "29118F18-9DFC-36A8-9028-A19B13996D5E");
+    }
+
+    #[test]
+    fn parse_uuid_rejects_invalid() {
+        assert!(parse_uuid_string("not-a-uuid").is_err());
+        assert!(parse_uuid_string("1234").is_err());
+    }
+
+    #[test]
+    fn macho_arch_aliases_match() {
+        assert!(macho_arch_matches_filter("arm64", "aarch64"));
+        assert!(macho_arch_matches_filter("x86_64", "amd64"));
+        assert!(macho_arch_matches_filter("i386", "x86"));
+    }
 }

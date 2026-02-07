@@ -68,6 +68,8 @@ Options:
 
 - `-f`: treat input addresses as file offsets
 - `-v`: verbose debug output
+- `-a, --arch <ARCH>`: select architecture for Mach-O fat files (for example `arm64`, `arm64e`, `armv7`, `x86_64`, `i386`)
+- `--uuid <UUID>`: select Mach-O slice by UUID (with or without `-`)
 
 ### Examples
 
@@ -93,6 +95,18 @@ Enable verbose output:
 
 ```bash
 atosl -v -o MyApp.app/MyApp -l 0x100000000 0x100001234
+```
+
+Select slice from a fat Mach-O by architecture:
+
+```bash
+atosl -o Flutter -l 0x100000000 -a arm64 0x100001234
+```
+
+Select slice from a fat Mach-O by UUID:
+
+```bash
+atosl -o Flutter -l 0x100000000 --uuid 34FBD46D-4A1F-3B41-A0F1-4E57D7E25B04 0x100001234
 ```
 
 ## Output
