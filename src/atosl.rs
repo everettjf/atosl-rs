@@ -4,35 +4,41 @@
 // created at 2022-01-01
 //
 use crate::demangle;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use gimli::{DW_TAG_subprogram, DebugInfoOffset, Dwarf, EndianSlice, RunTimeEndian};
 use object::{Object, ObjectSection, ObjectSegment};
 use std::path::Path;
 use std::{borrow, fs};
 
 pub fn print_addresses(
-    object_path: &str,
+    object_path: &Path,
     load_address: u64,
-    addresses: Vec<u64>,
+    addresses: &[u64],
     verbose: bool,
     file_offset_type: bool,
 ) -> Result<(), anyhow::Error> {
-    let file = fs::File::open(&object_path)?;
+    let file = fs::File::open(object_path)
+        .with_context(|| format!("failed to open object file: {}", object_path.display()))?;
     let mmap = unsafe { memmap::Mmap::map(&file)? };
     let object = object::File::parse(&*mmap)?;
-    let object_filename = Path::new(&object_path)
+    let object_filename = object_path
         .file_name()
-        .ok_or(anyhow!("file name error"))?
-        .to_str()
-        .ok_or(anyhow!("file name error(to_str)"))?;
+        .ok_or_else(|| {
+            anyhow!(
+                "failed to get file name from path: {}",
+                object_path.display()
+            )
+        })?
+        .to_string_lossy()
+        .to_string();
 
     if is_object_dwarf(&object) {
         if verbose {
-            println!("dwarf");
+            println!("resolver: dwarf");
         }
         dwarf_symbolize_addresses(
             &object,
-            object_filename,
+            &object_filename,
             load_address,
             addresses,
             verbose,
@@ -40,11 +46,11 @@ pub fn print_addresses(
         )
     } else {
         if verbose {
-            println!("symbols");
+            println!("resolver: symbol_table");
         }
         symbol_symbolize_addresses(
             &object,
-            object_filename,
+            &object_filename,
             load_address,
             addresses,
             verbose,
@@ -54,10 +60,35 @@ pub fn print_addresses(
 }
 
 fn is_object_dwarf(object: &object::File) -> bool {
-    if let Some(_) = object.section_by_name("__debug_line") {
-        true
+    object.section_by_name("__debug_line").is_some()
+}
+
+fn find_text_vmaddr(object: &object::File) -> Result<u64, anyhow::Error> {
+    for segment in object.segments() {
+        if let Some(name) = segment.name()? {
+            if name == "__TEXT" {
+                return Ok(segment.address());
+            }
+        }
+    }
+    Ok(0)
+}
+
+fn calculate_search_address(
+    load_address: u64,
+    address: u64,
+    text_vmaddr: u64,
+    file_offset_type: bool,
+) -> Result<u64, anyhow::Error> {
+    let base = address
+        .checked_sub(load_address)
+        .ok_or_else(|| anyhow!("address is smaller than load address"))?;
+
+    if file_offset_type {
+        Ok(base)
     } else {
-        false
+        base.checked_add(text_vmaddr)
+            .ok_or_else(|| anyhow!("address overflow while applying __TEXT vmaddr"))
     }
 }
 
@@ -65,35 +96,24 @@ fn symbol_symbolize_addresses(
     object: &object::File,
     object_filename: &str,
     load_address: u64,
-    addresses: Vec<u64>,
+    addresses: &[u64],
     verbose: bool,
     file_offset_type: bool,
 ) -> Result<(), anyhow::Error> {
-    // find vmaddr for __TEXT segment
-    let mut segments = object.segments();
-    let mut text_vmaddr = 0;
-    while let Some(segment) = segments.next() {
-        if let Some(name) = segment.name()? {
-            if name == "__TEXT" {
-                text_vmaddr = segment.address();
-                break;
-            }
-        }
-    }
+    let text_vmaddr = find_text_vmaddr(object)?;
 
-    for address in addresses {
+    for &address in addresses {
         if verbose {
             println!("---------------------------------------------");
             println!("BEGIN ADDRESS {} | {:016x}", address, address);
         }
 
         let symbol_result = symbol_symbolize_address(
-            &object,
+            object,
             object_filename,
             load_address,
             address,
             text_vmaddr,
-            verbose,
             file_offset_type,
         );
         if verbose {
@@ -117,14 +137,10 @@ fn symbol_symbolize_address(
     load_address: u64,
     address: u64,
     text_vmaddr: u64,
-    _verbose: bool,
     file_offset_type: bool,
 ) -> Result<String, anyhow::Error> {
-    let search_address: u64 = if file_offset_type {
-        address - load_address
-    } else {
-        address - load_address + text_vmaddr
-    };
+    let search_address =
+        calculate_search_address(load_address, address, text_vmaddr, file_offset_type)?;
 
     let symbols = object.symbol_map();
     let found_symbol = symbols.get(search_address);
@@ -145,7 +161,7 @@ fn dwarf_symbolize_addresses(
     object: &object::File,
     object_filename: &str,
     load_address: u64,
-    addresses: Vec<u64>,
+    addresses: &[u64],
     verbose: bool,
     file_offset_type: bool,
 ) -> Result<(), anyhow::Error> {
@@ -163,21 +179,11 @@ fn dwarf_symbolize_addresses(
             None => Ok(borrow::Cow::Borrowed(&[][..])),
         }
     })?;
-    let dwarf = dwarf_cow.borrow(|section| gimli::EndianSlice::new((&*section).as_ref(), endian));
+    let dwarf = dwarf_cow.borrow(|section| gimli::EndianSlice::new(section.as_ref(), endian));
 
-    // find vmaddr for __TEXT segment
-    let mut segments = object.segments();
-    let mut text_vmaddr = 0;
-    while let Some(segment) = segments.next() {
-        if let Some(name) = segment.name()? {
-            if name == "__TEXT" {
-                text_vmaddr = segment.address();
-                break;
-            }
-        }
-    }
+    let text_vmaddr = find_text_vmaddr(object)?;
 
-    for address in addresses {
+    for &address in addresses {
         if verbose {
             println!("---------------------------------------------");
             println!("BEGIN ADDRESS {} | {:016x}", address, address);
@@ -200,12 +206,11 @@ fn dwarf_symbolize_addresses(
             Err(_) => {
                 // downgrade to symbol table search
                 let symbol_result = symbol_symbolize_address(
-                    &object,
+                    object,
                     object_filename,
                     load_address,
                     address,
                     text_vmaddr,
-                    verbose,
                     file_offset_type,
                 );
                 match symbol_result {
@@ -231,11 +236,8 @@ fn dwarf_symbolize_address(
     verbose: bool,
     file_offset_type: bool,
 ) -> Result<String, anyhow::Error> {
-    let search_address: u64 = if file_offset_type {
-        address - load_address
-    } else {
-        address - load_address + text_vmaddr
-    };
+    let search_address =
+        calculate_search_address(load_address, address, text_vmaddr, file_offset_type)?;
 
     // aranges
     let mut debug_info_offset: Option<DebugInfoOffset> = None;
@@ -276,7 +278,7 @@ fn dwarf_symbolize_address(
     let mut debug_info_entries = debug_info_unit.entries();
 
     let mut found_symbol_name: Option<String> = None;
-    while let Some(_) = debug_info_entries.next_entry()? {
+    while debug_info_entries.next_entry()?.is_some() {
         if let Some(entry) = debug_info_entries.current() {
             if entry.tag() == DW_TAG_subprogram {
                 let mut low_pc: Option<u64> = None;

@@ -15,6 +15,7 @@ pub fn demangle_symbol(symbol: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use symbolic_common::Language;
 
     #[test]
     fn demangle() {

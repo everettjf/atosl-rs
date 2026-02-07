@@ -9,6 +9,7 @@ mod demangle;
 use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
+use std::process;
 
 #[derive(Parser, Debug)]
 #[clap(about, version, author)]
@@ -35,8 +36,10 @@ struct Args {
 }
 
 fn parse_address_string(address: &str) -> Result<u64, anyhow::Error> {
-    if address.starts_with("0x") {
-        let value = address.trim_start_matches("0x");
+    if let Some(value) = address
+        .strip_prefix("0x")
+        .or_else(|| address.strip_prefix("0X"))
+    {
         let value = u64::from_str_radix(value, 16)?;
         Ok(value)
     } else {
@@ -47,17 +50,39 @@ fn parse_address_string(address: &str) -> Result<u64, anyhow::Error> {
 
 fn main() {
     let args = Args::parse();
-    let object_path = args.object_path.into_os_string().into_string().unwrap();
-
     let result = atosl::print_addresses(
-        &object_path,
+        &args.object_path,
         args.load_address,
-        args.addresses,
+        &args.addresses,
         args.verbose,
         args.file_offset_type,
     );
     match result {
         Ok(..) => {}
-        Err(err) => println!("{}", err),
+        Err(err) => {
+            eprintln!("{err}");
+            process::exit(1);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_address_string;
+
+    #[test]
+    fn parse_hex_address() {
+        assert_eq!(parse_address_string("0x10").unwrap(), 16);
+        assert_eq!(parse_address_string("0Xff").unwrap(), 255);
+    }
+
+    #[test]
+    fn parse_decimal_address() {
+        assert_eq!(parse_address_string("42").unwrap(), 42);
+    }
+
+    #[test]
+    fn parse_invalid_address() {
+        assert!(parse_address_string("not_a_number").is_err());
     }
 }
