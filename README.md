@@ -3,26 +3,31 @@
 <div align="center">
 
 [![Crates.io](https://img.shields.io/crates/v/atosl.svg?style=flat-square&color=EA5312)](https://crates.io/crates/atosl)
+[![Docs.rs](https://img.shields.io/docsrs/atosl?style=flat-square&color=2E8555)](https://docs.rs/crate/atosl)
 [![GitHub Stars](https://img.shields.io/github/stars/everettjf/atosl-rs?style=flat-square&color=FF6B6B)](https://github.com/everettjf/atosl-rs/stargazers)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.60+-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
 
-A partial replacement for Apple's `atos`.
-
-Convert memory addresses to symbols (function names, source files, line numbers) from binaries with symbol info.
+A practical Rust CLI for symbolication.  
+`atosl` resolves memory addresses to function names and source locations from binaries with symbols/DWARF.
 
 </div>
 
-## Overview
+## Why atosl
 
-`atosl-rs` is a Rust CLI tool that resolves addresses to readable symbols.
+Apple's `atos` is handy, but not always available or convenient in cross-platform workflows.  
+`atosl` provides a lightweight alternative for address-to-symbol resolution with a simple CLI.
 
-- Works with Mach-O symbol table and DWARF debug info
-- Supports verbose output for troubleshooting
-- Supports file-offset mode for raw offsets
-- Runs on macOS, Linux, and Windows (Rust target support)
+## Features
 
-## Install
+- Resolve one or more addresses to symbols
+- Use Mach-O symbol table and DWARF debug info
+- Support file-offset mode (`-f`)
+- Select architecture/UUID for fat Mach-O binaries
+- Verbose mode for debugging symbolication failures
+- Works with Rust-supported platforms (tooling/build environment dependent)
+
+## Installation
 
 ### From crates.io
 
@@ -44,15 +49,19 @@ Binary path:
 ./target/release/atosl
 ```
 
-## Usage
-
-CLI help:
+## Quick Start
 
 ```bash
-atosl --help
+atosl -o MyApp.app/MyApp -l 0x100000000 0x100001234
 ```
 
-Current syntax:
+Output shape:
+
+```text
+<symbol> (in <binary>) (<file>:<line>)
+```
+
+## Usage
 
 ```bash
 atosl [OPTIONS] -o <OBJECT_PATH> -l <LOAD_ADDRESS> [ADDRESSES]...
@@ -60,24 +69,18 @@ atosl [OPTIONS] -o <OBJECT_PATH> -l <LOAD_ADDRESS> [ADDRESSES]...
 
 Required arguments:
 
-- `-o <OBJECT_PATH>`: binary/symbol file path
-- `-l <LOAD_ADDRESS>`: load address (hex like `0x100000000` or decimal)
+- `-o <OBJECT_PATH>`: binary or symbol file path
+- `-l <LOAD_ADDRESS>`: load address (`0x...` hex or decimal)
 - `[ADDRESSES]...`: one or more addresses to symbolize
 
 Options:
 
-- `-f`: treat input addresses as file offsets
-- `-v`: verbose debug output
-- `-a, --arch <ARCH>`: select architecture for Mach-O fat files (for example `arm64`, `arm64e`, `armv7`, `x86_64`, `i386`)
-- `--uuid <UUID>`: select Mach-O slice by UUID (with or without `-`)
+- `-f`: treat addresses as file offsets
+- `-v`: verbose diagnostics
+- `-a, --arch <ARCH>`: choose architecture in fat Mach-O (`arm64`, `arm64e`, `armv7`, `x86_64`, `i386`, ...)
+- `--uuid <UUID>`: choose Mach-O slice by UUID (with or without hyphens)
 
-### Examples
-
-Resolve one address:
-
-```bash
-atosl -o MyApp.app/MyApp -l 0x100000000 0x100001234
-```
+## Examples
 
 Resolve multiple addresses:
 
@@ -91,43 +94,23 @@ Use file-offset mode:
 atosl -f -o MyApp.app/MyApp -l 0x0 0x1234
 ```
 
-Enable verbose output:
-
-```bash
-atosl -v -o MyApp.app/MyApp -l 0x100000000 0x100001234
-```
-
-Select slice from a fat Mach-O by architecture:
+Select a fat Mach-O slice by architecture:
 
 ```bash
 atosl -o Flutter -l 0x100000000 -a arm64 0x100001234
 ```
 
-Select slice from a fat Mach-O by UUID:
+Select a fat Mach-O slice by UUID:
 
 ```bash
 atosl -o Flutter -l 0x100000000 --uuid 34FBD46D-4A1F-3B41-A0F1-4E57D7E25B04 0x100001234
 ```
 
-## Output
+## Troubleshooting
 
-Typical output format:
-
-```text
-<symbol> (in <binary>) (<file>:<line>)
-```
-
-If only symbol table match is available:
-
-```text
-<symbol> (in <binary>) + <offset>
-```
-
-If not found:
-
-```text
-N/A - <reason>
-```
+- `N/A - no symbols`: binary may be stripped or missing debug sections
+- Unexpected source location: verify the load address is correct for the running image
+- Wrong symbol on fat binaries: specify `--arch` or `--uuid` explicitly
 
 ## Development
 
@@ -139,10 +122,14 @@ cargo fmt
 cargo clippy -- -D warnings
 ```
 
-## Known limitations
+## Known Limitations
 
-- Not a 1:1 feature-complete clone of Apple's `atos`
-- Accuracy depends on available symbols/DWARF sections in the input binary
+- Not a full 1:1 clone of Apple's `atos`
+- Final accuracy depends on symbol and DWARF quality in the input binary
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=everettjf/atosl-rs&type=Date)](https://star-history.com/#everettjf/atosl-rs&Date)
 
 ## Contributing
 
