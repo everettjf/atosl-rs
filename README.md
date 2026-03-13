@@ -205,6 +205,8 @@ Run the benchmark binary without executing it in CI-style validation:
 cargo bench --bench batch_symbolize --no-run
 ```
 
+Release steps are documented in [RELEASING.md](/Users/eevv/focus/atosl-rs/RELEASING.md).
+
 ## Known limitations
 
 - This is still not a 1:1 clone of Apple's `atos`

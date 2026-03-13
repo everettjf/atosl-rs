@@ -101,7 +101,7 @@ fn collect_target_addresses(binary_path: &Path) -> anyhow::Result<Vec<u64>> {
         .symbols()
         .filter_map(|symbol| {
             let name = symbol.name().ok()?;
-            if name.starts_with("target_") {
+            if name.starts_with("target_") || name.starts_with("_target_") {
                 Some(symbol.address())
             } else {
                 None
