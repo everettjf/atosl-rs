@@ -1,139 +1,216 @@
 # atosl-rs
 
-<div align="center">
+`atosl` is a Rust CLI and library for local symbolication. It resolves raw binary addresses into function names and source locations using DWARF when available and falls back to symbol tables when debug info is missing.
 
-[![Crates.io](https://img.shields.io/crates/v/atosl.svg?style=flat-square&color=EA5312)](https://crates.io/crates/atosl)
-[![Docs.rs](https://img.shields.io/docsrs/atosl?style=flat-square&color=2E8555)](https://docs.rs/crate/atosl)
-[![GitHub Stars](https://img.shields.io/github/stars/everettjf/atosl-rs?style=flat-square&color=FF6B6B)](https://github.com/everettjf/atosl-rs/stargazers)
-[![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
-[![Rust](https://img.shields.io/badge/Rust-1.60+-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
+It is designed for cross-platform tooling, CI pipelines, crash-processing utilities, and developer workflows that need `atos`-style symbolication without depending on Apple's host environment.
 
-A practical Rust CLI for symbolication.  
-`atosl` resolves memory addresses to function names and source locations from binaries with symbols/DWARF.
+## Why this exists
 
-</div>
+Apple's `atos` is useful, but it is tightly coupled to Apple's runtime environment. `atosl` focuses on the parts teams usually need in build systems and tooling:
 
-## Why atosl
+- A single local binary and embeddable Rust API
+- Script-friendly output in `text`, `json`, and `json-pretty`
+- DWARF-first resolution with symbol-table fallback
+- Fat Mach-O slice selection by architecture or UUID
+- Reproducible regression coverage for Apple-specific behavior
 
-Apple's `atos` is handy, but not always available or convenient in cross-platform workflows.  
-`atosl` provides a lightweight alternative for address-to-symbol resolution with a simple CLI.
+## Current quality bar
 
-## Features
+- `clap` v4 CLI with explicit long-form flags
+- Structured JSON and pretty JSON output
+- Unit tests for parsing, UUID handling, architecture aliases, and address math
+- Integration tests that build a real fixture binary and validate end-to-end symbolization
+- Apple-specific Mach-O/DWARF golden tests with reproducible fixtures and checked-in snapshots
+- Fat Mach-O slice-selection goldens for `--arch` and `--uuid`
+- JSON output goldens for Apple single-slice and fat-binary workflows
+- Verbose diagnostic goldens for resolver selection and per-frame lookup tracing
+- Criterion benchmark target for batch symbolication throughput
+- GitHub Actions CI for `fmt`, `clippy`, tests, and release builds
 
-- Resolve one or more addresses to symbols
-- Use Mach-O symbol table and DWARF debug info
-- Support file-offset mode (`-f`)
-- Select architecture/UUID for fat Mach-O binaries
-- Verbose mode for debugging symbolication failures
-- Works with Rust-supported platforms (tooling/build environment dependent)
+## What it handles well
+
+- Local symbolication from executables, object files, and dSYM payloads
+- Multi-address lookups in a single invocation
+- Mach-O fat binaries with explicit slice selection
+- Machine-readable integration through JSON output
+- Debugging symbolication decisions through verbose diagnostics
 
 ## Installation
 
-### From crates.io
+From crates.io:
 
 ```bash
 cargo install atosl
 ```
 
-### From source
+From source:
 
 ```bash
 git clone https://github.com/everettjf/atosl-rs.git
 cd atosl-rs
 cargo build --release
-```
-
-Binary path:
-
-```bash
-./target/release/atosl
-```
-
-## Quick Start
-
-```bash
-atosl -o MyApp.app/MyApp -l 0x100000000 0x100001234
-```
-
-Output shape:
-
-```text
-<symbol> (in <binary>) (<file>:<line>)
+./target/release/atosl --help
 ```
 
 ## Usage
 
 ```bash
-atosl [OPTIONS] -o <OBJECT_PATH> -l <LOAD_ADDRESS> [ADDRESSES]...
+atosl -o <OBJECT_PATH> -l <LOAD_ADDRESS> [OPTIONS] <ADDRESS>...
 ```
 
 Required arguments:
 
-- `-o <OBJECT_PATH>`: binary or symbol file path
-- `-l <LOAD_ADDRESS>`: load address (`0x...` hex or decimal)
-- `[ADDRESSES]...`: one or more addresses to symbolize
+- `-o, --object <OBJECT_PATH>`: object file, executable, or dSYM payload
+- `-l, --load-address <LOAD_ADDRESS>`: runtime image load address
+- `<ADDRESS>...`: one or more addresses to symbolize
 
-Options:
+Key options:
 
-- `-f`: treat addresses as file offsets
-- `-v`: verbose diagnostics
-- `-a, --arch <ARCH>`: choose architecture in fat Mach-O (`arm64`, `arm64e`, `armv7`, `x86_64`, `i386`, ...)
-- `--uuid <UUID>`: choose Mach-O slice by UUID (with or without hyphens)
+- `-f, --file-offsets`: interpret addresses as file offsets
+- `-a, --arch <ARCH>`: choose a Mach-O slice in a fat binary
+- `--uuid <UUID>`: choose a Mach-O slice by UUID
+- `--format <text|json|json-pretty>`: select output format
+- `-v, --verbose`: print resolver diagnostics to stderr
 
 ## Examples
 
-Resolve multiple addresses:
+Symbolize a single address:
 
 ```bash
-atosl -o MyApp.app/MyApp -l 0x100000000 0x100001234 0x100005678
+atosl -o MyApp.app/MyApp -l 0x100000000 0x100001234
 ```
 
-Use file-offset mode:
+Symbolize multiple addresses:
 
 ```bash
-atosl -f -o MyApp.app/MyApp -l 0x0 0x1234
+atosl -o MyApp.app/MyApp -l 0x100000000 0x100001234 0x100004321 0x100008888
 ```
 
-Select a fat Mach-O slice by architecture:
+Select a specific fat Mach-O slice:
 
 ```bash
-atosl -o Flutter -l 0x100000000 -a arm64 0x100001234
+atosl -o Flutter -l 0x100000000 --arch arm64 0x100001234
 ```
 
-Select a fat Mach-O slice by UUID:
+Emit machine-readable output:
 
 ```bash
-atosl -o Flutter -l 0x100000000 --uuid 34FBD46D-4A1F-3B41-A0F1-4E57D7E25B04 0x100001234
+atosl -o MyApp.app/MyApp -l 0x100000000 --format json 0x100001234
 ```
 
-## Troubleshooting
+Use verbose diagnostics to inspect resolver behavior:
 
-- `N/A - no symbols`: binary may be stripped or missing debug sections
-- Unexpected source location: verify the load address is correct for the running image
-- Wrong symbol on fat binaries: specify `--arch` or `--uuid` explicitly
+```bash
+atosl -v -o MyApp.app/MyApp -l 0x100000000 --arch arm64 0x100001234
+```
+
+Example JSON shape:
+
+```json
+{
+  "object_path": "MyApp.app/MyApp",
+  "object_name": "MyApp",
+  "selected_slice": {
+    "arch": "arm64",
+    "uuid": "34FBD46D-4A1F-3B41-A0F1-4E57D7E25B04"
+  },
+  "frames": [
+    {
+      "status": "resolved",
+      "requested_address": 4294971956,
+      "lookup_address": 4660,
+      "symbol": "main",
+      "object_name": "MyApp",
+      "offset": 0,
+      "resolver": "symbol_table",
+      "location": {
+        "file": "src/main.rs",
+        "line": 12
+      }
+    }
+  ]
+}
+```
+
+## Text output
+
+When DWARF source information is available:
+
+```text
+my::function (in MyApp) (src/main.rs:42)
+```
+
+When only the symbol table is available:
+
+```text
+my::function (in MyApp) + 16
+```
+
+When symbolication fails:
+
+```text
+N/A - failed to search symbol table
+```
+
+## Library usage
+
+`atosl` now exposes a library API as well as the CLI:
+
+```rust
+use atosl::{atosl, OutputFormat, SymbolizeOptions};
+
+let report = atosl::symbolize_path(&SymbolizeOptions {
+    object_path: "fixture_bin".into(),
+    load_address: 0,
+    addresses: vec![0x1234],
+    verbose: false,
+    file_offsets: false,
+    arch: None,
+    uuid: None,
+    format: OutputFormat::Json,
+})?;
+```
+
+The returned `SymbolizeReport` preserves the selected slice, per-address resolver choice, lookup address, symbol name, and optional source location.
+
+## Regression assets
+
+Apple-specific behavior is protected by checked-in goldens under `tests/golden/apple/`:
+
+- Text output for DWARF-backed and symbol-table-backed Mach-O inputs
+- JSON output for single-slice and fat Mach-O workflows
+- Verbose diagnostics for resolver tracing and slice selection
+- Negative-path coverage for ambiguous fat binaries
+
+Refresh those snapshots on macOS with:
+
+```bash
+./scripts/refresh_apple_goldens.sh
+```
 
 ## Development
 
 ```bash
-cargo check
-cargo build
-cargo build --release
 cargo fmt
-cargo clippy -- -D warnings
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets
+cargo build --release
+./scripts/refresh_apple_goldens.sh
+cargo bench --bench batch_symbolize
 ```
 
-## Known Limitations
+Run the benchmark binary without executing it in CI-style validation:
 
-- Not a full 1:1 clone of Apple's `atos`
-- Final accuracy depends on symbol and DWARF quality in the input binary
+```bash
+cargo bench --bench batch_symbolize --no-run
+```
 
-## Star History
+## Known limitations
 
-[![Star History Chart](https://api.star-history.com/svg?repos=everettjf/atosl-rs&type=Date)](https://star-history.com/#everettjf/atosl-rs&Date)
-
-## Contributing
-
-Issues and pull requests are welcome.
+- This is still not a 1:1 clone of Apple's `atos`
+- Symbolication quality depends on the symbol and DWARF data in the target binary
+- Mach-O workflows remain the primary design target; other object formats work best when symbols are present
+- Apple UUIDs and dSYM layouts are covered in tests, but real crash-log ingestion is still out of scope
 
 ## License
 

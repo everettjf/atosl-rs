@@ -1,0 +1,4 @@
+object: <OBJECT_PATH>
+selected_slice: arch=aarch64 uuid=<UUID>
+frame: requested=0x0000000100000348 lookup=0x0000000100000348 resolver=Dwarf status=resolved
+frame: requested=0x0000000100000364 lookup=0x0000000100000364 resolver=Dwarf status=resolved

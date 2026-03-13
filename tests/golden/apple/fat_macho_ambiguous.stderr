@@ -1,0 +1,5 @@
+fat Mach-O contains multiple slices.
+Use -a/--arch or --uuid to select one.
+Available slices:
+- arch=x86_64 uuid=<UUID>
+- arch=arm64 uuid=<UUID>

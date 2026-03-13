@@ -1,0 +1,30 @@
+{
+  "frames": [
+    {
+      "location": null,
+      "lookup_address": 4294968136,
+      "object_name": "macho_golden.stripped",
+      "offset": 0,
+      "requested_address": 4294968136,
+      "resolver": "symbol_table",
+      "status": "resolved",
+      "symbol": "_golden_alpha"
+    },
+    {
+      "location": null,
+      "lookup_address": 4294968164,
+      "object_name": "macho_golden.stripped",
+      "offset": 0,
+      "requested_address": 4294968164,
+      "resolver": "symbol_table",
+      "status": "resolved",
+      "symbol": "_golden_beta"
+    }
+  ],
+  "object_name": "macho_golden.stripped",
+  "object_path": "<OBJECT_PATH>",
+  "selected_slice": {
+    "arch": "aarch64",
+    "uuid": "<UUID>"
+  }
+}

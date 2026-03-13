@@ -1,79 +1,94 @@
-//
-// written by everettjf
-// email : everettjf@live.com
-// created at 2022-01-01
-//
-mod atosl;
-mod demangle;
-
-use anyhow::Result;
-use clap::Parser;
+use atosl::{OutputFormat, SymbolizeOptions};
+use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 use std::process;
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum CliOutputFormat {
+    Text,
+    Json,
+    JsonPretty,
+}
+
+impl From<CliOutputFormat> for OutputFormat {
+    fn from(value: CliOutputFormat) -> Self {
+        match value {
+            CliOutputFormat::Text => OutputFormat::Text,
+            CliOutputFormat::Json => OutputFormat::Json,
+            CliOutputFormat::JsonPretty => OutputFormat::JsonPretty,
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
-#[clap(about, version, author)]
+#[command(author, version, about)]
 struct Args {
     /// Symbol file path or binary file path
-    #[clap(short, parse(from_os_str))]
+    #[arg(short = 'o', long = "object", value_name = "OBJECT_PATH")]
     object_path: PathBuf,
 
     /// Load address of binary image
-    #[clap(short, parse(try_from_str = parse_address_string))]
+    #[arg(short = 'l', long = "load-address", value_parser = parse_address_string)]
     load_address: u64,
 
-    /// Addresses need to translate
-    #[clap(parse(try_from_str = parse_address_string))]
+    /// Addresses that should be symbolized
+    #[arg(value_parser = parse_address_string, required = true)]
     addresses: Vec<u64>,
 
-    /// Enable verbose mode with extra output
-    #[clap(short)]
+    /// Enable verbose diagnostics
+    #[arg(short, long)]
     verbose: bool,
 
-    /// Addresses are file offsets (ignore vmaddr in __TEXT or other executable segment)
-    #[clap(short)]
+    /// Treat addresses as file offsets
+    #[arg(short = 'f', long = "file-offsets")]
     file_offset_type: bool,
 
-    /// Select architecture for Mach-O universal/fat files (e.g. arm64, arm64e, armv7, x86_64, i386)
-    #[clap(short = 'a', long)]
+    /// Select architecture for Mach-O universal/fat files
+    #[arg(short = 'a', long)]
     arch: Option<String>,
 
-    /// Select Mach-O slice by UUID (format: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX)
-    #[clap(long)]
+    /// Select Mach-O slice by UUID
+    #[arg(long)]
     uuid: Option<String>,
+
+    /// Output format
+    #[arg(long, value_enum, default_value_t = CliOutputFormat::Text)]
+    format: CliOutputFormat,
 }
 
-fn parse_address_string(address: &str) -> Result<u64, anyhow::Error> {
+fn parse_address_string(address: &str) -> Result<u64, String> {
     if let Some(value) = address
         .strip_prefix("0x")
         .or_else(|| address.strip_prefix("0X"))
     {
-        let value = u64::from_str_radix(value, 16)?;
-        Ok(value)
+        u64::from_str_radix(value, 16).map_err(|err| err.to_string())
     } else {
-        let value = address.parse::<u64>()?;
-        Ok(value)
+        address.parse::<u64>().map_err(|err| err.to_string())
     }
 }
 
 fn main() {
     let args = Args::parse();
-    let result = atosl::print_addresses(
-        &args.object_path,
-        args.load_address,
-        &args.addresses,
-        args.verbose,
-        args.file_offset_type,
-        args.arch.as_deref(),
-        args.uuid.as_deref(),
-    );
-    match result {
-        Ok(..) => {}
+    let options = SymbolizeOptions {
+        object_path: args.object_path,
+        load_address: args.load_address,
+        addresses: args.addresses,
+        verbose: args.verbose,
+        file_offsets: args.file_offset_type,
+        arch: args.arch,
+        uuid: args.uuid,
+        format: args.format.into(),
+    };
+
+    let exit_code = match atosl::atosl::run(options) {
+        Ok(code) => code,
         Err(err) => {
-            eprintln!("{err}");
-            process::exit(1);
+            eprintln!("{err:#}");
+            1
         }
-    }
+    };
+
+    process::exit(exit_code);
 }
 
 #[cfg(test)]

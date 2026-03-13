@@ -1,0 +1,2 @@
+_golden_alpha (in macho_golden.stripped) + 0
+_golden_beta (in macho_golden.stripped) + 0

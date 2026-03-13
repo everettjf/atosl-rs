@@ -1,0 +1,36 @@
+{
+  "frames": [
+    {
+      "location": {
+        "file": "./tests/fixtures/apple/macho_golden.c",
+        "line": 6
+      },
+      "lookup_address": 4294968136,
+      "object_name": "macho_golden",
+      "offset": 0,
+      "requested_address": 4294968136,
+      "resolver": "dwarf",
+      "status": "resolved",
+      "symbol": "golden_alpha"
+    },
+    {
+      "location": {
+        "file": "./tests/fixtures/apple/macho_golden.c",
+        "line": 11
+      },
+      "lookup_address": 4294968164,
+      "object_name": "macho_golden",
+      "offset": 0,
+      "requested_address": 4294968164,
+      "resolver": "dwarf",
+      "status": "resolved",
+      "symbol": "golden_beta"
+    }
+  ],
+  "object_name": "macho_golden",
+  "object_path": "<OBJECT_PATH>",
+  "selected_slice": {
+    "arch": "aarch64",
+    "uuid": "<UUID>"
+  }
+}

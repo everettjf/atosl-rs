@@ -1,0 +1,2 @@
+golden_alpha (in macho_golden_fat) (./tests/fixtures/apple/macho_golden.c:6)
+golden_beta (in macho_golden_fat) (./tests/fixtures/apple/macho_golden.c:11)
