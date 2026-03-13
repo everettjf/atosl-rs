@@ -2,6 +2,14 @@
 
 This document describes the release flow for publishing a new `atosl` version to crates.io.
 
+If you want the repository to handle the full flow for you, use:
+
+```bash
+./deploy.sh patch
+```
+
+You can also pass `minor`, `major`, or an explicit version such as `0.1.16`.
+
 ## Prerequisites
 
 - You have push access to `origin`
@@ -43,6 +51,35 @@ If you changed Apple-specific logic and you are on macOS, also run:
 ```
 
 ## Release steps
+
+## One-command release
+
+From the repository root:
+
+```bash
+./deploy.sh patch
+```
+
+Other forms:
+
+```bash
+./deploy.sh minor
+./deploy.sh major
+./deploy.sh 0.1.16
+```
+
+The script does all of the following:
+
+- Verifies the working tree is clean
+- Bumps the crate version in [Cargo.toml](/Users/eevv/focus/atosl-rs/Cargo.toml)
+- Regenerates `Cargo.lock`
+- Runs validation
+- Creates a release commit and tag
+- Runs `cargo publish --dry-run`
+- Publishes to crates.io
+- Pushes the branch and tag to `origin`
+
+If you prefer to release manually, follow the steps below.
 
 Assume the next version is `0.1.16`.
 

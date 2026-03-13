@@ -206,6 +206,7 @@ cargo bench --bench batch_symbolize --no-run
 ```
 
 Release steps are documented in [RELEASING.md](/Users/eevv/focus/atosl-rs/RELEASING.md).
+For a one-command release flow, run `./deploy.sh [patch|minor|major|X.Y.Z]`.
 
 ## Known limitations
 
