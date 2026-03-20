@@ -1,6 +1,6 @@
 [package]
 name = "atosl"
-version = "0.1.16"
+version = "0.1.17"
 edition = "2021"
 rust-version = "1.74"
 description = "A partial replacement for Apple's atos tool for converting binary addresses to symbols."
