@@ -701,13 +701,15 @@ fn dwarf_symbolize_in_unit(
         None => find_source_location_in_unit(dwarf, unit, search_address)?,
     };
 
+    let offset = search_address.saturating_sub(subprogram.low_pc);
+
     match location {
         Some(location) => Ok(Some(SymbolizedFrame {
             requested_address,
             lookup_address: search_address,
             symbol: demangle::demangle_symbol(&subprogram.symbol_name),
             object_name: object_name.to_string(),
-            offset: 0,
+            offset,
             resolver: ResolverKind::Dwarf,
             location: Some(location),
         })),
@@ -716,7 +718,7 @@ fn dwarf_symbolize_in_unit(
             lookup_address: search_address,
             symbol: demangle::demangle_symbol(&subprogram.symbol_name),
             object_name: object_name.to_string(),
-            offset: 0,
+            offset,
             resolver: ResolverKind::Dwarf,
             location: None,
         })),
@@ -725,6 +727,7 @@ fn dwarf_symbolize_in_unit(
 
 struct MatchedSubprogram {
     symbol_name: String,
+    low_pc: u64,
     location: Option<SourceLocation>,
 }
 
@@ -760,6 +763,7 @@ fn find_subprogram_in_unit(
                 if let Ok(name) = dwarf.attr_string(unit, value) {
                     return Ok(Some(MatchedSubprogram {
                         symbol_name: name.to_string_lossy().into_owned(),
+                        low_pc,
                         location: find_decl_location(dwarf, unit, entry)?,
                     }));
                 }
