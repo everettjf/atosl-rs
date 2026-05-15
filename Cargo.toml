@@ -2,7 +2,7 @@
 name = "atosl"
 version = "0.1.16"
 edition = "2021"
-rust-version = "1.74"
+rust-version = "1.85"
 description = "A partial replacement for Apple's atos tool for converting binary addresses to symbols."
 license = "MIT"
 repository = "https://github.com/everettjf/atosl-rs"
@@ -18,12 +18,12 @@ resolver = "2"
 anyhow = "1.0.86"
 clap = { version = "4.5.32", features = ["derive"] }
 gimli = "0.26.1"
-memmap2 = "0.5.10"
+memmap2 = "0.9.10"
 object = "0.28.1"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
-symbolic-common = "8.5.0"
-symbolic-demangle = "8.5.0"
+symbolic-common = "13.0.0"
+symbolic-demangle = "13.0.0"
 
 [dev-dependencies]
 assert_cmd = "2.0.16"
