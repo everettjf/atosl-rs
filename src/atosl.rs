@@ -105,19 +105,19 @@ pub fn run(options: SymbolizeOptions) -> Result<i32> {
 }
 
 pub fn symbolize_path(options: &SymbolizeOptions) -> Result<SymbolizeReport> {
-    let file = fs::File::open(&options.object_path).with_context(|| {
-        format!(
-            "failed to open object file: {}",
-            options.object_path.display()
-        )
-    })?;
+    let object_path = resolve_object_path(&options.object_path)?;
+    if options.verbose && object_path != options.object_path {
+        eprintln!("resolved_object: {}", object_path.display());
+    }
+    let file = fs::File::open(&object_path)
+        .with_context(|| format!("failed to open object file: {}", object_path.display()))?;
     let mmap = unsafe { memmap2::Mmap::map(&file) }
-        .with_context(|| format!("failed to memory-map: {}", options.object_path.display()))?;
+        .with_context(|| format!("failed to memory-map: {}", object_path.display()))?;
 
     let parsed_uuid_filter = options.uuid.as_deref().map(parse_uuid_string).transpose()?;
     let resolved = resolve_object_from_data(
         &mmap,
-        &options.object_path,
+        &object_path,
         options.arch.as_deref(),
         parsed_uuid_filter,
         options.verbose,
@@ -164,11 +164,70 @@ pub fn symbolize_path(options: &SymbolizeOptions) -> Result<SymbolizeReport> {
         .collect();
 
     Ok(SymbolizeReport {
-        object_path: options.object_path.display().to_string(),
+        object_path: object_path.display().to_string(),
         object_name: resolved.object_name,
         selected_slice: resolved.selected_slice,
         frames,
     })
+}
+
+// Accepts either a Mach-O/ELF file or a `.dSYM` bundle directory and returns
+// the path to the binary that actually carries the symbols.
+fn resolve_object_path(path: &Path) -> Result<PathBuf> {
+    if path.is_file() {
+        return Ok(path.to_path_buf());
+    }
+
+    if path.is_dir() {
+        let dwarf_dir = path.join("Contents/Resources/DWARF");
+        if dwarf_dir.is_dir() {
+            return select_dwarf_payload(&dwarf_dir, path);
+        }
+        return Err(anyhow!(
+            "{} is a directory but not a dSYM bundle (missing Contents/Resources/DWARF)",
+            path.display()
+        ));
+    }
+
+    Err(anyhow!("object path does not exist: {}", path.display()))
+}
+
+fn select_dwarf_payload(dwarf_dir: &Path, bundle: &Path) -> Result<PathBuf> {
+    let mut payloads = fs::read_dir(dwarf_dir)
+        .with_context(|| format!("failed to read dSYM payload dir: {}", dwarf_dir.display()))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.is_file())
+        .collect::<Vec<_>>();
+    payloads.sort();
+
+    match payloads.len() {
+        0 => Err(anyhow!("no DWARF payload found in {}", dwarf_dir.display())),
+        1 => Ok(payloads.remove(0)),
+        _ => {
+            // A fat dSYM ships one payload named after the bundle (Foo.dSYM -> Foo).
+            let base = bundle
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.trim_end_matches(".dSYM"));
+            if let Some(base) = base {
+                if let Some(found) = payloads
+                    .iter()
+                    .find(|path| path.file_name().and_then(|name| name.to_str()) == Some(base))
+                {
+                    return Ok(found.clone());
+                }
+            }
+            Err(anyhow!(
+                "multiple DWARF payloads in {}; pass the file directly:\n{}",
+                dwarf_dir.display(),
+                payloads
+                    .iter()
+                    .map(|path| format!("- {}", path.display()))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ))
+        }
+    }
 }
 
 fn emit_report(report: &SymbolizeReport, format: OutputFormat, verbose: bool) {

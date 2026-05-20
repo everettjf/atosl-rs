@@ -53,6 +53,35 @@ fn cli_emits_text_for_resolved_symbol() {
         .stdout(predicates::str::contains("(in fixture_bin)"));
 }
 
+#[test]
+fn cli_resolves_dsym_bundle_directory() {
+    let fixture = Fixture::build().unwrap();
+    let address = fixture.symbol_address("fixture_target").unwrap();
+
+    let dwarf_dir = fixture
+        .binary_path()
+        .parent()
+        .unwrap()
+        .join("Fixture.dSYM/Contents/Resources/DWARF");
+    fs::create_dir_all(&dwarf_dir).unwrap();
+    let payload = dwarf_dir.join("fixture_bin");
+    fs::copy(fixture.binary_path(), &payload).unwrap();
+    let bundle = fixture.binary_path().parent().unwrap().join("Fixture.dSYM");
+
+    Command::cargo_bin("atosl")
+        .unwrap()
+        .args([
+            "-o",
+            bundle.to_str().unwrap(),
+            "-l",
+            &format!("0x{:x}", fixture.load_address().unwrap()),
+            &format!("0x{address:x}"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("(in fixture_bin)"));
+}
+
 struct Fixture {
     _tempdir: TempDir,
     binary_path: PathBuf,

@@ -61,7 +61,7 @@ atosl -o <OBJECT_PATH> -l <LOAD_ADDRESS> [OPTIONS] <ADDRESS>...
 
 Required arguments:
 
-- `-o, --object <OBJECT_PATH>`: object file, executable, or dSYM payload
+- `-o, --object <OBJECT_PATH>`: object file, executable, dSYM payload, or `.dSYM` bundle directory
 - `-l, --load-address <LOAD_ADDRESS>`: runtime image load address
 - `<ADDRESS>...`: one or more addresses to symbolize
 
@@ -85,6 +85,12 @@ Symbolize multiple addresses:
 
 ```bash
 atosl -o MyApp.app/MyApp -l 0x100000000 0x100001234 0x100004321 0x100008888
+```
+
+Point directly at a `.dSYM` bundle (the DWARF payload is located automatically):
+
+```bash
+atosl -o MyApp.app.dSYM -l 0x100000000 0x100001234
 ```
 
 Select a specific fat Mach-O slice:
