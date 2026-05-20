@@ -30,6 +30,7 @@ Apple's `atos` is useful, but it is tightly coupled to Apple's runtime environme
 ## What it handles well
 
 - Local symbolication from executables, object files, and dSYM payloads
+- Inlined call-stack expansion for DWARF frames, like `atos`
 - Multi-address lookups in a single invocation
 - Mach-O fat binaries with explicit slice selection
 - Machine-readable integration through JSON output
