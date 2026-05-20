@@ -38,5 +38,16 @@ jobs:
       - name: Test
         run: cargo test --all-targets
 
+      - name: Capture golden diff (debug)
+        if: ${{ always() && runner.os == 'macOS' }}
+        run: |
+          UPDATE_GOLDENS=1 cargo test --test apple_golden || true
+          {
+            echo '## Apple golden diff';
+            echo '```diff';
+            git --no-pager diff -- tests/golden/apple || true;
+            echo '```';
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Release build
         run: cargo build --release
