@@ -1,13 +1,15 @@
 use crate::demangle;
-use anyhow::{anyhow, Context, Result};
-use gimli::{Dwarf, EndianSlice, RunTimeEndian, Unit};
+use anyhow::{anyhow, Context as _, Result};
+use gimli::{EndianSlice, RunTimeEndian};
 use object::macho;
 use object::read::macho::{FatArch, FatHeader};
-use object::{Object, ObjectSection, ObjectSegment};
+use object::{Object, ObjectSection, ObjectSegment, SymbolMap, SymbolMapName};
 use serde::Serialize;
 use std::borrow;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+type DwarfContext<'data> = addr2line::Context<EndianSlice<'data, RunTimeEndian>>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -49,6 +51,12 @@ pub struct SourceLocation {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct InlineFrame {
+    pub symbol: String,
+    pub location: Option<SourceLocation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SymbolizedFrame {
     pub requested_address: u64,
     pub lookup_address: u64,
@@ -57,6 +65,8 @@ pub struct SymbolizedFrame {
     pub offset: u64,
     pub resolver: ResolverKind,
     pub location: Option<SourceLocation>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub inlined_by: Vec<InlineFrame>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -119,65 +129,39 @@ pub fn symbolize_path(options: &SymbolizeOptions) -> Result<SymbolizeReport> {
         RunTimeEndian::Big
     };
     let text_vmaddr = find_text_vmaddr(&resolved.object)?;
-    let frames = if is_object_dwarf(&resolved.object) {
-        let dwarf_cow = Dwarf::load(
-            |section_id| -> Result<borrow::Cow<'_, [u8]>, gimli::Error> {
-                let macho_name = section_id
-                    .name()
-                    .strip_prefix('.')
-                    .map(|name| format!("__{name}"));
+    let symbol_map = resolved.object.symbol_map();
 
-                match resolved
-                    .object
-                    .section_by_name(section_id.name())
-                    .or_else(|| {
-                        macho_name
-                            .as_deref()
-                            .and_then(|name| resolved.object.section_by_name(name))
-                    }) {
-                    Some(section) => Ok(section
-                        .uncompressed_data()
-                        .unwrap_or(borrow::Cow::Borrowed(&[][..]))),
-                    None => Ok(borrow::Cow::Borrowed(&[][..])),
-                }
-            },
-        )?;
-        let dwarf = dwarf_cow.borrow(|section| EndianSlice::new(section.as_ref(), endian));
-
-        options
-            .addresses
-            .iter()
-            .copied()
-            .map(|requested_address| {
-                symbolize_address(
-                    &resolved.object,
-                    &resolved.object_name,
-                    Some(&dwarf),
-                    options.load_address,
-                    requested_address,
-                    text_vmaddr,
-                    options.file_offsets,
-                )
-            })
-            .collect()
+    // Building the DWARF context once amortizes unit indexing and line-program
+    // parsing across every requested address.
+    let dwarf_sections = if is_object_dwarf(&resolved.object) {
+        Some(load_dwarf_sections(&resolved.object)?)
     } else {
-        options
-            .addresses
-            .iter()
-            .copied()
-            .map(|requested_address| {
-                symbolize_address(
-                    &resolved.object,
-                    &resolved.object_name,
-                    None,
-                    options.load_address,
-                    requested_address,
-                    text_vmaddr,
-                    options.file_offsets,
-                )
-            })
-            .collect()
+        None
     };
+    let context = match &dwarf_sections {
+        Some(sections) => {
+            let dwarf = sections.borrow(|section| EndianSlice::new(section.as_ref(), endian));
+            Some(DwarfContext::from_dwarf(dwarf).context("failed to build DWARF context")?)
+        }
+        None => None,
+    };
+
+    let frames = options
+        .addresses
+        .iter()
+        .copied()
+        .map(|requested_address| {
+            symbolize_address(
+                &resolved.object_name,
+                context.as_ref(),
+                &symbol_map,
+                options.load_address,
+                requested_address,
+                text_vmaddr,
+                options.file_offsets,
+            )
+        })
+        .collect();
 
     Ok(SymbolizeReport {
         object_path: options.object_path.display().to_string(),
@@ -219,6 +203,9 @@ fn emit_text_report(report: &SymbolizeReport, verbose: bool) {
                     );
                 }
                 println!("{}", format_text_frame(frame));
+                for inline in &frame.inlined_by {
+                    println!("{}", format_inline_frame(inline, &frame.object_name));
+                }
             }
             SymbolizeOutcome::Unresolved {
                 requested_address,
@@ -248,10 +235,21 @@ fn format_text_frame(frame: &SymbolizedFrame) -> String {
     }
 }
 
+fn format_inline_frame(frame: &InlineFrame, object_name: &str) -> String {
+    match &frame.location {
+        Some(location) => format!(
+            "{} (in {}) ({}:{})",
+            frame.symbol, object_name, location.file, location.line
+        ),
+        None => format!("{} (in {})", frame.symbol, object_name),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn symbolize_address<'data>(
-    object: &object::File<'data, &'data [u8]>,
     object_name: &str,
-    dwarf: Option<&Dwarf<EndianSlice<'data, RunTimeEndian>>>,
+    context: Option<&DwarfContext<'data>>,
+    symbol_map: &SymbolMap<SymbolMapName<'data>>,
     load_address: u64,
     requested_address: u64,
     text_vmaddr: u64,
@@ -272,15 +270,19 @@ fn symbolize_address<'data>(
         }
     };
 
-    if let Some(dwarf) = dwarf {
-        if let Ok(frame) =
-            dwarf_symbolize_address(dwarf, object_name, requested_address, search_address)
-        {
+    if let Some(context) = context {
+        if let Ok(Some(frame)) = dwarf_symbolize_address(
+            context,
+            symbol_map,
+            object_name,
+            requested_address,
+            search_address,
+        ) {
             return SymbolizeOutcome::Resolved(frame);
         }
     }
 
-    match symbol_symbolize_address(object, object_name, requested_address, search_address) {
+    match symbol_symbolize_address(symbol_map, object_name, requested_address, search_address) {
         Ok(frame) => SymbolizeOutcome::Resolved(frame),
         Err(err) => SymbolizeOutcome::Unresolved {
             requested_address,
@@ -604,14 +606,13 @@ fn calculate_search_address(
     }
 }
 
-fn symbol_symbolize_address<'data>(
-    object: &object::File<'data, &'data [u8]>,
+fn symbol_symbolize_address(
+    symbol_map: &SymbolMap<SymbolMapName<'_>>,
     object_name: &str,
     requested_address: u64,
     search_address: u64,
 ) -> Result<SymbolizedFrame> {
-    let symbols = object.symbol_map();
-    let found_symbol = symbols
+    let found_symbol = symbol_map
         .get(search_address)
         .ok_or_else(|| anyhow!("failed to search symbol table"))?;
     let offset = search_address.saturating_sub(found_symbol.address());
@@ -624,303 +625,100 @@ fn symbol_symbolize_address<'data>(
         offset,
         resolver: ResolverKind::SymbolTable,
         location: None,
+        inlined_by: Vec::new(),
     })
 }
 
-fn dwarf_symbolize_address(
-    dwarf: &Dwarf<EndianSlice<'_, RunTimeEndian>>,
-    object_name: &str,
-    requested_address: u64,
-    search_address: u64,
-) -> Result<SymbolizedFrame> {
-    if let Some(frame) =
-        dwarf_symbolize_in_aranges(dwarf, object_name, requested_address, search_address)?
-    {
-        return Ok(frame);
-    }
+fn load_dwarf_sections<'data>(
+    object: &object::File<'data, &'data [u8]>,
+) -> Result<gimli::DwarfSections<borrow::Cow<'data, [u8]>>> {
+    let sections = gimli::DwarfSections::load(
+        |section_id| -> Result<borrow::Cow<'data, [u8]>, gimli::Error> {
+            let macho_name = section_id
+                .name()
+                .strip_prefix('.')
+                .map(|name| format!("__{name}"));
 
-    let mut units = dwarf.units();
-    while let Some(header) = units.next()? {
-        let unit = dwarf.unit(header)?;
-        if let Some(frame) =
-            dwarf_symbolize_in_unit(dwarf, &unit, object_name, requested_address, search_address)?
-        {
-            return Ok(frame);
-        }
-    }
-
-    Err(anyhow!("failed to search DWARF"))
-}
-
-fn dwarf_symbolize_in_aranges(
-    dwarf: &Dwarf<EndianSlice<'_, RunTimeEndian>>,
-    object_name: &str,
-    requested_address: u64,
-    search_address: u64,
-) -> Result<Option<SymbolizedFrame>> {
-    let mut headers = dwarf.debug_aranges.headers();
-    while let Some(header) = headers.next()? {
-        let mut entries = header.entries();
-        while let Some(entry) = entries.next()? {
-            let end = entry
-                .address()
-                .checked_add(entry.length())
-                .ok_or_else(|| anyhow!("DWARF address range overflow"))?;
-            if (entry.address()..end).contains(&search_address) {
-                let unit = dwarf.unit(
-                    dwarf
-                        .debug_info
-                        .header_from_offset(header.debug_info_offset())?,
-                )?;
-                return dwarf_symbolize_in_unit(
-                    dwarf,
-                    &unit,
-                    object_name,
-                    requested_address,
-                    search_address,
-                );
+            match object.section_by_name(section_id.name()).or_else(|| {
+                macho_name
+                    .as_deref()
+                    .and_then(|name| object.section_by_name(name))
+            }) {
+                Some(section) => Ok(section
+                    .uncompressed_data()
+                    .unwrap_or(borrow::Cow::Borrowed(&[][..]))),
+                None => Ok(borrow::Cow::Borrowed(&[][..])),
             }
-        }
-    }
-
-    Ok(None)
-}
-
-fn dwarf_symbolize_in_unit(
-    dwarf: &Dwarf<EndianSlice<'_, RunTimeEndian>>,
-    unit: &Unit<EndianSlice<'_, RunTimeEndian>>,
-    object_name: &str,
-    requested_address: u64,
-    search_address: u64,
-) -> Result<Option<SymbolizedFrame>> {
-    let Some(subprogram) = find_subprogram_in_unit(dwarf, unit, search_address)? else {
-        return Ok(None);
-    };
-    let location = match subprogram.location {
-        Some(location) => Some(location),
-        None => find_source_location_in_unit(dwarf, unit, search_address)?,
-    };
-
-    let offset = search_address.saturating_sub(subprogram.low_pc);
-
-    match location {
-        Some(location) => Ok(Some(SymbolizedFrame {
-            requested_address,
-            lookup_address: search_address,
-            symbol: demangle::demangle_symbol(&subprogram.symbol_name),
-            object_name: object_name.to_string(),
-            offset,
-            resolver: ResolverKind::Dwarf,
-            location: Some(location),
-        })),
-        None => Ok(Some(SymbolizedFrame {
-            requested_address,
-            lookup_address: search_address,
-            symbol: demangle::demangle_symbol(&subprogram.symbol_name),
-            object_name: object_name.to_string(),
-            offset,
-            resolver: ResolverKind::Dwarf,
-            location: None,
-        })),
-    }
-}
-
-struct MatchedSubprogram {
-    symbol_name: String,
-    low_pc: u64,
-    location: Option<SourceLocation>,
-}
-
-fn find_subprogram_in_unit(
-    dwarf: &Dwarf<EndianSlice<'_, RunTimeEndian>>,
-    unit: &Unit<EndianSlice<'_, RunTimeEndian>>,
-    search_address: u64,
-) -> Result<Option<MatchedSubprogram>> {
-    let mut entries = unit.entries();
-    while entries.next_entry()?.is_some() {
-        let Some(entry) = entries.current() else {
-            continue;
-        };
-
-        if entry.tag() != gimli::DW_TAG_subprogram {
-            continue;
-        }
-
-        let Some((low_pc, high_pc)) = subprogram_range(dwarf, unit, entry)? else {
-            continue;
-        };
-
-        if !(low_pc..high_pc).contains(&search_address) {
-            continue;
-        }
-
-        for attr in [
-            gimli::DW_AT_linkage_name,
-            gimli::DW_AT_MIPS_linkage_name,
-            gimli::DW_AT_name,
-        ] {
-            if let Ok(Some(value)) = entry.attr_value(attr) {
-                if let Ok(name) = dwarf.attr_string(unit, value) {
-                    return Ok(Some(MatchedSubprogram {
-                        symbol_name: name.to_string_lossy().into_owned(),
-                        low_pc,
-                        location: find_decl_location(dwarf, unit, entry)?,
-                    }));
-                }
-            }
-        }
-    }
-
-    Ok(None)
-}
-
-fn find_decl_location(
-    dwarf: &Dwarf<EndianSlice<'_, RunTimeEndian>>,
-    unit: &Unit<EndianSlice<'_, RunTimeEndian>>,
-    entry: &gimli::DebuggingInformationEntry<'_, '_, EndianSlice<'_, RunTimeEndian>>,
-) -> Result<Option<SourceLocation>> {
-    let Some(program) = unit.line_program.as_ref() else {
-        return Ok(None);
-    };
-
-    let file_index = match entry.attr_value(gimli::DW_AT_decl_file)? {
-        Some(gimli::AttributeValue::FileIndex(index)) => index,
-        _ => return Ok(None),
-    };
-    let line = match entry.attr_value(gimli::DW_AT_decl_line)? {
-        Some(gimli::AttributeValue::Udata(line)) => line,
-        _ => return Ok(None),
-    };
-
-    let Some(file) = program.header().file(file_index) else {
-        return Ok(None);
-    };
-
-    Ok(Some(SourceLocation {
-        file: resolve_line_file(dwarf, unit, program.header(), file)?,
-        line,
-    }))
-}
-
-fn subprogram_range(
-    dwarf: &Dwarf<EndianSlice<'_, RunTimeEndian>>,
-    unit: &Unit<EndianSlice<'_, RunTimeEndian>>,
-    entry: &gimli::DebuggingInformationEntry<'_, '_, EndianSlice<'_, RunTimeEndian>>,
-) -> Result<Option<(u64, u64)>> {
-    let low_pc = match entry.attr_value(gimli::DW_AT_low_pc)? {
-        Some(value) => resolve_attr_address(dwarf, unit, value)?,
-        _ => return Ok(None),
-    };
-    let Some(low_pc) = low_pc else {
-        return Ok(None);
-    };
-
-    let high_pc = match entry.attr_value(gimli::DW_AT_high_pc)? {
-        Some(gimli::AttributeValue::Addr(value)) => value,
-        Some(gimli::AttributeValue::Udata(size)) => low_pc
-            .checked_add(size)
-            .ok_or_else(|| anyhow!("DWARF high_pc overflow"))?,
-        Some(value) => match resolve_attr_address(dwarf, unit, value)? {
-            Some(address) => address,
-            None => return Ok(None),
         },
-        _ => return Ok(None),
-    };
-
-    Ok(Some((low_pc, high_pc)))
+    )?;
+    Ok(sections)
 }
 
-fn resolve_attr_address(
-    dwarf: &Dwarf<EndianSlice<'_, RunTimeEndian>>,
-    unit: &Unit<EndianSlice<'_, RunTimeEndian>>,
-    value: gimli::AttributeValue<EndianSlice<'_, RunTimeEndian>>,
-) -> Result<Option<u64>> {
-    match value {
-        gimli::AttributeValue::Addr(address) => Ok(Some(address)),
-        other => Ok(dwarf.attr_address(unit, other)?),
-    }
-}
-
-fn find_source_location_in_unit(
-    dwarf: &Dwarf<EndianSlice<'_, RunTimeEndian>>,
-    unit: &Unit<EndianSlice<'_, RunTimeEndian>>,
+// `atos` reports inlined call sites as a stack, innermost first. addr2line
+// yields frames in the same order, so the first frame becomes the primary
+// result and the remaining ones are the callers that inlined it.
+fn dwarf_symbolize_address<'data>(
+    context: &DwarfContext<'data>,
+    symbol_map: &SymbolMap<SymbolMapName<'data>>,
+    object_name: &str,
+    requested_address: u64,
     search_address: u64,
-) -> Result<Option<SourceLocation>> {
-    let Some(program) = unit.line_program.clone() else {
-        return Ok(None);
-    };
+) -> Result<Option<SymbolizedFrame>> {
+    let mut iter = context.find_frames(search_address).skip_all_loads()?;
+    let mut frames: Vec<(String, Option<SourceLocation>)> = Vec::new();
 
-    let mut rows = program.rows();
-    let mut last_file_name: Option<String> = None;
-    let mut best_match: Option<(u64, String, u64)> = None;
-
-    while let Some((header, row)) = rows.next_row()? {
-        if row.end_sequence() {
-            continue;
-        }
-
-        if let Some(file) = row.file(header) {
-            last_file_name = Some(resolve_line_file(dwarf, unit, header, file)?);
-        }
-
-        let Some(file_name) = last_file_name.clone() else {
+    while let Some(frame) = iter.next()? {
+        let Some(function) = frame.function.as_ref() else {
             continue;
         };
-
-        let line = row.line().map(|line| line.get()).unwrap_or(0);
-        let row_address = row.address();
-
-        if row_address > search_address {
-            break;
-        }
-
-        best_match = Some((row_address, file_name, line));
+        let Ok(raw_name) = function.raw_name() else {
+            continue;
+        };
+        let symbol = demangle::demangle_symbol(raw_name.as_ref());
+        let location = frame.location.as_ref().and_then(location_from_addr2line);
+        frames.push((symbol, location));
     }
 
-    Ok(best_match.and_then(|(_, file, line)| {
-        if line == 0 {
-            None
-        } else {
-            Some(SourceLocation { file, line })
-        }
+    if frames.is_empty() {
+        return Ok(None);
+    }
+
+    let offset = function_offset(symbol_map, search_address);
+    let (symbol, location) = frames.remove(0);
+    let inlined_by = frames
+        .into_iter()
+        .map(|(symbol, location)| InlineFrame { symbol, location })
+        .collect();
+
+    Ok(Some(SymbolizedFrame {
+        requested_address,
+        lookup_address: search_address,
+        symbol,
+        object_name: object_name.to_string(),
+        offset,
+        resolver: ResolverKind::Dwarf,
+        location,
+        inlined_by,
     }))
 }
 
-fn resolve_line_file(
-    dwarf: &Dwarf<EndianSlice<'_, RunTimeEndian>>,
-    unit: &Unit<EndianSlice<'_, RunTimeEndian>>,
-    header: &gimli::LineProgramHeader<EndianSlice<'_, RunTimeEndian>>,
-    file: &gimli::FileEntry<EndianSlice<'_, RunTimeEndian>>,
-) -> Result<String> {
-    let file_name = dwarf
-        .attr_string(unit, file.path_name())?
-        .to_string_lossy()
-        .into_owned();
-
-    let directory = file
-        .directory(header)
-        .and_then(|directory| dwarf.attr_string(unit, directory).ok())
-        .map(|directory| directory.to_string_lossy().into_owned());
-
-    Ok(match directory {
-        Some(directory) if !directory.is_empty() => join_debug_path(&directory, &file_name),
-        _ => file_name,
+fn location_from_addr2line(location: &addr2line::Location<'_>) -> Option<SourceLocation> {
+    let file = location.file?;
+    let line = location.line.unwrap_or(0);
+    if line == 0 {
+        return None;
+    }
+    Some(SourceLocation {
+        file: file.to_string(),
+        line: u64::from(line),
     })
 }
 
-fn join_debug_path(directory: &str, file_name: &str) -> String {
-    if directory == "." {
-        if file_name.starts_with("./") {
-            return file_name.to_string();
-        }
-        return format!("./{file_name}");
-    }
-
-    if file_name.starts_with(directory) {
-        return file_name.to_string();
-    }
-
-    format!("{directory}/{file_name}")
+fn function_offset(symbol_map: &SymbolMap<SymbolMapName<'_>>, search_address: u64) -> u64 {
+    symbol_map
+        .get(search_address)
+        .map(|symbol| search_address.saturating_sub(symbol.address()))
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -977,11 +775,36 @@ mod tests {
                 file: "src/main.rs".to_string(),
                 line: 7,
             }),
+            inlined_by: Vec::new(),
         };
 
         assert_eq!(
             format_text_frame(&frame),
             "demo (in fixture) (src/main.rs:7)"
+        );
+    }
+
+    #[test]
+    fn format_inline_frame_with_and_without_location() {
+        let with_location = InlineFrame {
+            symbol: "leaf".to_string(),
+            location: Some(SourceLocation {
+                file: "src/lib.rs".to_string(),
+                line: 3,
+            }),
+        };
+        assert_eq!(
+            format_inline_frame(&with_location, "fixture"),
+            "leaf (in fixture) (src/lib.rs:3)"
+        );
+
+        let without_location = InlineFrame {
+            symbol: "leaf".to_string(),
+            location: None,
+        };
+        assert_eq!(
+            format_inline_frame(&without_location, "fixture"),
+            "leaf (in fixture)"
         );
     }
 }
