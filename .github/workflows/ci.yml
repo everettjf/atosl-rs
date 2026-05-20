@@ -10,6 +10,8 @@ on:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -37,6 +39,17 @@ jobs:
 
       - name: Test
         run: cargo test --all-targets
+
+      - name: Capture goldens (debug)
+        if: ${{ always() && runner.os == 'macOS' }}
+        run: |
+          UPDATE_GOLDENS=1 cargo test --test apple_golden || true
+          git config user.name "golden-capture"
+          git config user.email "golden-capture@users.noreply.github.com"
+          git checkout -B golden-capture-Cf3xi
+          git add tests/golden/apple
+          git commit -m "capture macos goldens [skip ci]" || echo "no changes to capture"
+          git push -f origin golden-capture-Cf3xi
 
       - name: Release build
         run: cargo build --release

@@ -28,6 +28,6 @@ pub mod atosl;
 pub mod demangle;
 
 pub use atosl::{
-    OutputFormat, ResolverKind, SelectedSlice, SourceLocation, SymbolizeOptions, SymbolizeOutcome,
-    SymbolizeReport, SymbolizedFrame,
+    InlineFrame, OutputFormat, ResolverKind, SelectedSlice, SourceLocation, SymbolizeOptions,
+    SymbolizeOutcome, SymbolizeReport, SymbolizedFrame,
 };

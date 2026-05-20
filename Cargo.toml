@@ -15,9 +15,10 @@ resolver = "2"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+addr2line = { version = "0.25.1", default-features = false, features = ["std", "smallvec"] }
 anyhow = "1.0.86"
 clap = { version = "4.5.32", features = ["derive"] }
-gimli = "0.26.1"
+gimli = "0.32.0"
 memmap2 = "0.9.10"
 object = "0.28.1"
 serde = { version = "1.0.219", features = ["derive"] }
