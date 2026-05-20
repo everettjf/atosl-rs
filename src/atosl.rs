@@ -709,9 +709,28 @@ fn location_from_addr2line(location: &addr2line::Location<'_>) -> Option<SourceL
         return None;
     }
     Some(SourceLocation {
-        file: file.to_string(),
+        file: normalize_debug_path(file),
         line: u64::from(line),
     })
+}
+
+// addr2line joins the compilation directory with the file path, which on some
+// toolchains (notably dsymutil output) yields redundant "." segments such as
+// "././tests/foo.c". Collapse them while preserving a single leading "./".
+fn normalize_debug_path(path: &str) -> String {
+    let components = path
+        .split('/')
+        .filter(|component| !component.is_empty() && *component != ".")
+        .collect::<Vec<_>>()
+        .join("/");
+
+    if path.starts_with('/') {
+        format!("/{components}")
+    } else if path.starts_with("./") {
+        format!("./{components}")
+    } else {
+        components
+    }
 }
 
 fn function_offset(symbol_map: &SymbolMap<SymbolMapName<'_>>, search_address: u64) -> u64 {
@@ -782,6 +801,23 @@ mod tests {
             format_text_frame(&frame),
             "demo (in fixture) (src/main.rs:7)"
         );
+    }
+
+    #[test]
+    fn normalize_debug_path_collapses_redundant_dots() {
+        assert_eq!(
+            normalize_debug_path("././tests/fixtures/apple/macho_golden.c"),
+            "./tests/fixtures/apple/macho_golden.c"
+        );
+        assert_eq!(
+            normalize_debug_path("./tests/fixtures/apple/macho_golden.c"),
+            "./tests/fixtures/apple/macho_golden.c"
+        );
+        assert_eq!(
+            normalize_debug_path("/abs/path/main.rs"),
+            "/abs/path/main.rs"
+        );
+        assert_eq!(normalize_debug_path("src/lib.rs"), "src/lib.rs");
     }
 
     #[test]
