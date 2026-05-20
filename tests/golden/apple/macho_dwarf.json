@@ -2,7 +2,7 @@
   "frames": [
     {
       "location": {
-        "file": "./tests/fixtures/apple/macho_golden.c",
+        "file": "././tests/fixtures/apple/macho_golden.c",
         "line": 6
       },
       "lookup_address": 4294968136,
@@ -15,7 +15,7 @@
     },
     {
       "location": {
-        "file": "./tests/fixtures/apple/macho_golden.c",
+        "file": "././tests/fixtures/apple/macho_golden.c",
         "line": 11
       },
       "lookup_address": 4294968164,
