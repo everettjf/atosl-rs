@@ -41,6 +41,10 @@ struct Args {
     #[arg(short = 'i', long = "input")]
     input: Option<PathBuf>,
 
+    /// Extra directory to search for separate ELF debug files (repeatable)
+    #[arg(long = "debug-dir")]
+    debug_dir: Vec<PathBuf>,
+
     /// Enable verbose diagnostics
     #[arg(short, long)]
     verbose: bool,
@@ -85,6 +89,7 @@ fn main() {
         uuid: args.uuid,
         format: args.format.into(),
         input: args.input,
+        debug_dirs: args.debug_dir,
     };
 
     let exit_code = match atosl::atosl::run(options) {

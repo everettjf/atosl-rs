@@ -34,7 +34,7 @@ Apple's `atos` is useful, but it is tightly coupled to Apple's runtime environme
 - Multi-address lookups in a single invocation
 - Addresses from the command line, a file (`--input`), or stdin (streamed in text mode)
 - `.dSYM` bundle directories, or a directory searched by `--uuid` / build-id
-- Separate ELF debug files via `.gnu_debuglink` or build-id
+- Separate ELF debug files via CRC-checked `.gnu_debuglink`, build-id, or the debuginfod cache
 - Mach-O fat binaries with explicit slice selection
 - Machine-readable integration through JSON output
 - Debugging symbolication decisions through verbose diagnostics
@@ -74,6 +74,7 @@ Key options:
 - `-a, --arch <ARCH>`: choose a Mach-O slice in a fat binary
 - `--uuid <UUID>`: choose a Mach-O slice by UUID, or select a file from a directory by UUID/build-id
 - `-i, --input <FILE>`: read addresses from a file (defaults to stdin when no addresses are given)
+- `--debug-dir <DIR>`: extra root to search for separate ELF debug files (repeatable)
 - `--format <text|json|json-pretty>`: select output format
 - `-v, --verbose`: print resolver diagnostics to stderr
 

@@ -224,6 +224,161 @@ fn run_objcopy(args: &[&str], cwd: &Path) {
     assert!(status.success(), "objcopy {args:?} failed");
 }
 
+#[test]
+fn cli_rejects_debuglink_with_bad_crc() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+
+    let tempdir = tempfile::tempdir().unwrap();
+    let src = tempdir.path().join("f.c");
+    fs::write(
+        &src,
+        "int fixture_target(void){return 7;}\nint main(void){return fixture_target();}\n",
+    )
+    .unwrap();
+    let bin = tempdir.path().join("app");
+    assert!(ProcessCommand::new("cc")
+        .args([
+            "-g",
+            "-O0",
+            src.to_str().unwrap(),
+            "-o",
+            bin.to_str().unwrap()
+        ])
+        .status()
+        .unwrap()
+        .success());
+
+    run_objcopy(&["--only-keep-debug", "app", "app.debug"], tempdir.path());
+    run_objcopy(&["--strip-debug", "app"], tempdir.path());
+    run_objcopy(&["--add-gnu-debuglink=app.debug", "app"], tempdir.path());
+
+    // Corrupt the debug file so its CRC no longer matches the recorded value.
+    let debug_path = tempdir.path().join("app.debug");
+    let mut bytes = fs::read(&debug_path).unwrap();
+    bytes.push(0);
+    fs::write(&debug_path, &bytes).unwrap();
+
+    let address = symbol_addr(&bin, "fixture_target");
+    let load = text_addr(&bin);
+
+    // The CRC mismatch makes atosl ignore app.debug and fall back to the
+    // stripped binary's symbol table, so the object name is "app", not
+    // "app.debug".
+    Command::cargo_bin("atosl")
+        .unwrap()
+        .args([
+            "-o",
+            bin.to_str().unwrap(),
+            "-l",
+            &format!("0x{load:x}"),
+            &format!("0x{address:x}"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("(in app)"));
+}
+
+#[test]
+fn cli_uses_extra_debug_dir() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+
+    let tempdir = tempfile::tempdir().unwrap();
+    let src = tempdir.path().join("f.c");
+    fs::write(
+        &src,
+        "int fixture_target(void){return 7;}\nint main(void){return fixture_target();}\n",
+    )
+    .unwrap();
+    let bin = tempdir.path().join("app");
+    assert!(ProcessCommand::new("cc")
+        .args([
+            "-g",
+            "-O0",
+            src.to_str().unwrap(),
+            "-o",
+            bin.to_str().unwrap()
+        ])
+        .status()
+        .unwrap()
+        .success());
+
+    run_objcopy(&["--only-keep-debug", "app", "app.debug"], tempdir.path());
+    run_objcopy(&["--strip-debug", "app"], tempdir.path());
+    run_objcopy(&["--add-gnu-debuglink=app.debug", "app"], tempdir.path());
+
+    // Move the debug file out of the binary's directory so only --debug-dir can
+    // find it.
+    let extra = tempdir.path().join("extra");
+    fs::create_dir_all(&extra).unwrap();
+    fs::rename(tempdir.path().join("app.debug"), extra.join("app.debug")).unwrap();
+
+    let address = symbol_addr(&bin, "fixture_target");
+    let load = text_addr(&bin);
+
+    Command::cargo_bin("atosl")
+        .unwrap()
+        .args([
+            "-o",
+            bin.to_str().unwrap(),
+            "--debug-dir",
+            extra.to_str().unwrap(),
+            "-l",
+            &format!("0x{load:x}"),
+            &format!("0x{address:x}"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("(in app.debug)"));
+}
+
+#[test]
+fn cli_resolves_via_debuginfod_cache() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+
+    let tempdir = tempfile::tempdir().unwrap();
+    let src = tempdir.path().join("f.c");
+    fs::write(
+        &src,
+        "int fixture_target(void){return 7;}\nint main(void){return fixture_target();}\n",
+    )
+    .unwrap();
+    let bin = tempdir.path().join("app");
+    let build_id = "abcdef0123456789abcdef0123456789abcdef01";
+    build_with_build_id(&src, &bin, build_id);
+
+    run_objcopy(&["--only-keep-debug", "app", "app.debug"], tempdir.path());
+    run_objcopy(&["--strip-debug", "app"], tempdir.path());
+
+    // Lay out the debug file the way the debuginfod client cache does.
+    let cache = tempdir.path().join("dicache");
+    let entry = cache.join(build_id);
+    fs::create_dir_all(&entry).unwrap();
+    fs::rename(tempdir.path().join("app.debug"), entry.join("debuginfo")).unwrap();
+
+    let address = symbol_addr(&bin, "fixture_target");
+    let load = text_addr(&bin);
+
+    Command::cargo_bin("atosl")
+        .unwrap()
+        .env("DEBUGINFOD_CACHE_PATH", cache.to_str().unwrap())
+        .args([
+            "-o",
+            bin.to_str().unwrap(),
+            "-l",
+            &format!("0x{load:x}"),
+            &format!("0x{address:x}"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("(in debuginfo)"));
+}
+
 fn build_with_build_id(src: &Path, out: &Path, build_id: &str) {
     let status = ProcessCommand::new("cc")
         .args([
