@@ -330,7 +330,7 @@ fn parse_address_token(token: &str) -> Result<u64, String> {
 // that actually carries the symbols.
 fn resolve_object_path(path: &Path, uuid: Option<&str>) -> Result<PathBuf> {
     if path.is_file() {
-        return Ok(path.to_path_buf());
+        return Ok(resolve_debug_companion(path));
     }
 
     if path.is_dir() {
@@ -375,6 +375,78 @@ fn find_object_by_id(dir: &Path, uuid: &str) -> Result<PathBuf> {
         dir.display(),
         uuid
     ))
+}
+
+// A stripped ELF can point at its DWARF in a separate file via `.gnu_debuglink`
+// or its build-id. When the given file carries no DWARF, follow those hints to a
+// companion debug file that exists; otherwise keep the original path.
+fn resolve_debug_companion(path: &Path) -> PathBuf {
+    let keep = || path.to_path_buf();
+
+    let Ok(data) = fs::read(path) else {
+        return keep();
+    };
+    let Ok(file) = object::File::parse(data.as_slice()) else {
+        return keep();
+    };
+    if is_object_dwarf(&file) {
+        return keep();
+    }
+
+    if let Some(name) = read_debuglink_name(&file) {
+        if let Some(found) = search_debuglink_paths(path, &name) {
+            return found;
+        }
+    }
+
+    if let Ok(Some(build_id)) = file.build_id() {
+        let candidate =
+            PathBuf::from("/usr/lib/debug/.build-id").join(build_id_debug_subpath(build_id));
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+
+    keep()
+}
+
+fn read_debuglink_name<'data>(file: &object::File<'data, &'data [u8]>) -> Option<String> {
+    let section = file.section_by_name(".gnu_debuglink")?;
+    let data = section.data().ok()?;
+    let end = data
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(data.len());
+    let name = std::str::from_utf8(&data[..end]).ok()?;
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+fn search_debuglink_paths(binary: &Path, debug_name: &str) -> Option<PathBuf> {
+    let dir = binary.parent().unwrap_or_else(|| Path::new("."));
+    let mut candidates = vec![dir.join(debug_name), dir.join(".debug").join(debug_name)];
+
+    if let Ok(absolute) = dir.canonicalize() {
+        let stripped = absolute.strip_prefix("/").unwrap_or(&absolute);
+        candidates.push(
+            PathBuf::from("/usr/lib/debug")
+                .join(stripped)
+                .join(debug_name),
+        );
+    }
+
+    candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
+fn build_id_debug_subpath(build_id: &[u8]) -> PathBuf {
+    let hex = format_hex(build_id);
+    match hex.split_at_checked(2) {
+        Some((prefix, rest)) => PathBuf::from(prefix).join(format!("{rest}.debug")),
+        None => PathBuf::from(format!("{hex}.debug")),
+    }
 }
 
 fn collect_candidate_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {

@@ -126,6 +126,11 @@ fn cli_reads_addresses_from_input_file() {
 
 #[test]
 fn cli_finds_object_in_directory_by_build_id() {
+    // build-id is an ELF/GNU-ld concept; skip on non-Linux toolchains.
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+
     let tempdir = tempfile::tempdir().unwrap();
     let src = tempdir.path().join("f.c");
     fs::write(
@@ -159,6 +164,64 @@ fn cli_finds_object_in_directory_by_build_id() {
         .assert()
         .success()
         .stdout(predicates::str::contains("(in beta)"));
+}
+
+#[test]
+fn cli_follows_gnu_debuglink_to_separate_debug_file() {
+    // .gnu_debuglink + objcopy are ELF/binutils features; skip elsewhere.
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+
+    let tempdir = tempfile::tempdir().unwrap();
+    let src = tempdir.path().join("f.c");
+    fs::write(
+        &src,
+        "int fixture_target(void){return 7;}\nint main(void){return fixture_target();}\n",
+    )
+    .unwrap();
+
+    let bin = tempdir.path().join("app");
+    let status = ProcessCommand::new("cc")
+        .args([
+            "-g",
+            "-O0",
+            src.to_str().unwrap(),
+            "-o",
+            bin.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    run_objcopy(&["--only-keep-debug", "app", "app.debug"], tempdir.path());
+    run_objcopy(&["--strip-debug", "app"], tempdir.path());
+    run_objcopy(&["--add-gnu-debuglink=app.debug", "app"], tempdir.path());
+
+    let address = symbol_addr(&bin, "fixture_target");
+    let load = text_addr(&bin);
+
+    Command::cargo_bin("atosl")
+        .unwrap()
+        .args([
+            "-o",
+            bin.to_str().unwrap(),
+            "-l",
+            &format!("0x{load:x}"),
+            &format!("0x{address:x}"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("(in app.debug)"));
+}
+
+fn run_objcopy(args: &[&str], cwd: &Path) {
+    let status = ProcessCommand::new("objcopy")
+        .args(args)
+        .current_dir(cwd)
+        .status()
+        .unwrap();
+    assert!(status.success(), "objcopy {args:?} failed");
 }
 
 fn build_with_build_id(src: &Path, out: &Path, build_id: &str) {
