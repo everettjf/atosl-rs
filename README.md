@@ -32,6 +32,9 @@ Apple's `atos` is useful, but it is tightly coupled to Apple's runtime environme
 - Local symbolication from executables, object files, and dSYM payloads
 - Inlined call-stack expansion for DWARF frames, like `atos`
 - Multi-address lookups in a single invocation
+- Addresses from the command line, a file (`--input`), or stdin (streamed in text mode)
+- `.dSYM` bundle directories, or a directory searched by `--uuid` / build-id
+- Separate ELF debug files via `.gnu_debuglink` or build-id
 - Mach-O fat binaries with explicit slice selection
 - Machine-readable integration through JSON output
 - Debugging symbolication decisions through verbose diagnostics
@@ -61,15 +64,16 @@ atosl -o <OBJECT_PATH> -l <LOAD_ADDRESS> [OPTIONS] <ADDRESS>...
 
 Required arguments:
 
-- `-o, --object <OBJECT_PATH>`: object file, executable, or dSYM payload
+- `-o, --object <OBJECT_PATH>`: object file, executable, dSYM payload, `.dSYM` bundle directory, or a directory to search with `--uuid`
 - `-l, --load-address <LOAD_ADDRESS>`: runtime image load address
-- `<ADDRESS>...`: one or more addresses to symbolize
+- `<ADDRESS>...`: addresses to symbolize; omit to read from `--input` or stdin
 
 Key options:
 
 - `-f, --file-offsets`: interpret addresses as file offsets
 - `-a, --arch <ARCH>`: choose a Mach-O slice in a fat binary
-- `--uuid <UUID>`: choose a Mach-O slice by UUID
+- `--uuid <UUID>`: choose a Mach-O slice by UUID, or select a file from a directory by UUID/build-id
+- `-i, --input <FILE>`: read addresses from a file (defaults to stdin when no addresses are given)
 - `--format <text|json|json-pretty>`: select output format
 - `-v, --verbose`: print resolver diagnostics to stderr
 
@@ -87,10 +91,34 @@ Symbolize multiple addresses:
 atosl -o MyApp.app/MyApp -l 0x100000000 0x100001234 0x100004321 0x100008888
 ```
 
+Point directly at a `.dSYM` bundle (the DWARF payload is located automatically):
+
+```bash
+atosl -o MyApp.app.dSYM -l 0x100000000 0x100001234
+```
+
 Select a specific fat Mach-O slice:
 
 ```bash
 atosl -o Flutter -l 0x100000000 --arch arm64 0x100001234
+```
+
+Read addresses from stdin (text output streams one result per line):
+
+```bash
+printf '0x100001234\n0x100004321\n' | atosl -o MyApp.app.dSYM -l 0x100000000
+```
+
+Read addresses from a file:
+
+```bash
+atosl -o MyApp.app.dSYM -l 0x100000000 --input crash_addresses.txt
+```
+
+Search a directory of dSYMs/binaries for the matching image by UUID (or build-id):
+
+```bash
+atosl -o ./symbols -l 0x100000000 --uuid 34FBD46D4A1F3B41A0F14E57D7E25B04 0x100001234
 ```
 
 Emit machine-readable output:
