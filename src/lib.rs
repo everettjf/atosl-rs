@@ -16,6 +16,7 @@
 //!     arch: Some("arm64".to_string()),
 //!     uuid: None,
 //!     format: OutputFormat::Json,
+//!     input: None,
 //! })?;
 //!
 //! println!("{:#?}", report.frames);

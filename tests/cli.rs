@@ -82,6 +82,48 @@ fn cli_resolves_dsym_bundle_directory() {
         .stdout(predicates::str::contains("(in fixture_bin)"));
 }
 
+#[test]
+fn cli_reads_addresses_from_stdin() {
+    let fixture = Fixture::build().unwrap();
+    let address = fixture.symbol_address("fixture_target").unwrap();
+
+    Command::cargo_bin("atosl")
+        .unwrap()
+        .args([
+            "-o",
+            fixture.binary_path().to_str().unwrap(),
+            "-l",
+            &format!("0x{:x}", fixture.load_address().unwrap()),
+        ])
+        .write_stdin(format!("0x{address:x}\n"))
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("(in fixture_bin)"));
+}
+
+#[test]
+fn cli_reads_addresses_from_input_file() {
+    let fixture = Fixture::build().unwrap();
+    let address = fixture.symbol_address("fixture_target").unwrap();
+
+    let input_path = fixture.binary_path().parent().unwrap().join("addrs.txt");
+    fs::write(&input_path, format!("0x{address:x}\n")).unwrap();
+
+    Command::cargo_bin("atosl")
+        .unwrap()
+        .args([
+            "-o",
+            fixture.binary_path().to_str().unwrap(),
+            "-l",
+            &format!("0x{:x}", fixture.load_address().unwrap()),
+            "--input",
+            input_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("(in fixture_bin)"));
+}
+
 struct Fixture {
     _tempdir: TempDir,
     binary_path: PathBuf,

@@ -7,6 +7,7 @@ use object::{Object, ObjectSection, ObjectSegment, SymbolMap, SymbolMapName};
 use serde::Serialize;
 use std::borrow;
 use std::fs;
+use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 type DwarfContext<'data> = addr2line::Context<EndianSlice<'data, RunTimeEndian>>;
@@ -36,6 +37,9 @@ pub struct SymbolizeOptions {
     pub arch: Option<String>,
     pub uuid: Option<String>,
     pub format: OutputFormat,
+    /// When no addresses are passed positionally, read them from this file, or
+    /// from stdin when `None`.
+    pub input: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -99,12 +103,131 @@ struct ResolvedObject<'data> {
 }
 
 pub fn run(options: SymbolizeOptions) -> Result<i32> {
-    let report = symbolize_path(&options)?;
+    // Addresses given on the command line use the batch path.
+    if !options.addresses.is_empty() {
+        let report = symbolize_path(&options)?;
+        emit_report(&report, options.format, options.verbose);
+        return Ok(0);
+    }
+
+    // Otherwise read addresses from a file or stdin. Text output streams a
+    // result per address; JSON collects a single document.
+    match options.format {
+        OutputFormat::Text => run_streaming_text(&options),
+        OutputFormat::Json | OutputFormat::JsonPretty => run_collected_input(&options),
+    }
+}
+
+pub fn symbolize_path(options: &SymbolizeOptions) -> Result<SymbolizeReport> {
+    with_symbolizer(options, |symbolizer, object_path, selected_slice| {
+        let frames = options
+            .addresses
+            .iter()
+            .copied()
+            .map(|requested_address| {
+                symbolizer.symbolize(
+                    options.load_address,
+                    requested_address,
+                    options.file_offsets,
+                )
+            })
+            .collect();
+
+        SymbolizeReport {
+            object_path,
+            object_name: symbolizer.object_name.to_string(),
+            selected_slice,
+            frames,
+        }
+    })
+}
+
+fn run_streaming_text(options: &SymbolizeOptions) -> Result<i32> {
+    with_symbolizer(
+        options,
+        |symbolizer, object_path, selected_slice| -> Result<i32> {
+            if options.verbose {
+                emit_text_header(&object_path, selected_slice.as_ref());
+            }
+            for_each_input_address(options.input.as_deref(), |parsed| {
+                emit_text_outcome(
+                    &symbolizer.symbolize_parsed(options, parsed),
+                    options.verbose,
+                );
+            })?;
+            Ok(0)
+        },
+    )?
+}
+
+fn run_collected_input(options: &SymbolizeOptions) -> Result<i32> {
+    let report = with_symbolizer(
+        options,
+        |symbolizer, object_path, selected_slice| -> Result<SymbolizeReport> {
+            let mut frames = Vec::new();
+            for_each_input_address(options.input.as_deref(), |parsed| {
+                frames.push(symbolizer.symbolize_parsed(options, parsed));
+            })?;
+            Ok(SymbolizeReport {
+                object_path,
+                object_name: symbolizer.object_name.to_string(),
+                selected_slice,
+                frames,
+            })
+        },
+    )??;
     emit_report(&report, options.format, options.verbose);
     Ok(0)
 }
 
-pub fn symbolize_path(options: &SymbolizeOptions) -> Result<SymbolizeReport> {
+struct Symbolizer<'a> {
+    object_name: &'a str,
+    context: Option<&'a DwarfContext<'a>>,
+    symbol_map: &'a SymbolMap<SymbolMapName<'a>>,
+    text_vmaddr: u64,
+}
+
+impl Symbolizer<'_> {
+    fn symbolize(
+        &self,
+        load_address: u64,
+        requested_address: u64,
+        file_offsets: bool,
+    ) -> SymbolizeOutcome {
+        symbolize_address(
+            self.object_name,
+            self.context,
+            self.symbol_map,
+            load_address,
+            requested_address,
+            self.text_vmaddr,
+            file_offsets,
+        )
+    }
+
+    fn symbolize_parsed(
+        &self,
+        options: &SymbolizeOptions,
+        parsed: Result<u64, String>,
+    ) -> SymbolizeOutcome {
+        match parsed {
+            Ok(address) => self.symbolize(options.load_address, address, options.file_offsets),
+            Err(error) => SymbolizeOutcome::Unresolved {
+                requested_address: 0,
+                error,
+            },
+        }
+    }
+}
+
+// Loads the object and DWARF context once, then hands a reusable symbolizer to
+// `body`. Keeping the borrowed state inside one stack frame avoids a
+// self-referential struct (the context borrows the sections, which borrow the
+// mmap).
+fn with_symbolizer<T>(
+    options: &SymbolizeOptions,
+    body: impl FnOnce(&Symbolizer<'_>, String, Option<SelectedSlice>) -> T,
+) -> Result<T> {
     let object_path = resolve_object_path(&options.object_path)?;
     if options.verbose && object_path != options.object_path {
         eprintln!("resolved_object: {}", object_path.display());
@@ -131,8 +254,6 @@ pub fn symbolize_path(options: &SymbolizeOptions) -> Result<SymbolizeReport> {
     let text_vmaddr = find_text_vmaddr(&resolved.object)?;
     let symbol_map = resolved.object.symbol_map();
 
-    // Building the DWARF context once amortizes unit indexing and line-program
-    // parsing across every requested address.
     let dwarf_sections = if is_object_dwarf(&resolved.object) {
         Some(load_dwarf_sections(&resolved.object)?)
     } else {
@@ -146,29 +267,59 @@ pub fn symbolize_path(options: &SymbolizeOptions) -> Result<SymbolizeReport> {
         None => None,
     };
 
-    let frames = options
-        .addresses
-        .iter()
-        .copied()
-        .map(|requested_address| {
-            symbolize_address(
-                &resolved.object_name,
-                context.as_ref(),
-                &symbol_map,
-                options.load_address,
-                requested_address,
-                text_vmaddr,
-                options.file_offsets,
-            )
-        })
-        .collect();
+    let symbolizer = Symbolizer {
+        object_name: &resolved.object_name,
+        context: context.as_ref(),
+        symbol_map: &symbol_map,
+        text_vmaddr,
+    };
 
-    Ok(SymbolizeReport {
-        object_path: object_path.display().to_string(),
-        object_name: resolved.object_name,
-        selected_slice: resolved.selected_slice,
-        frames,
-    })
+    Ok(body(
+        &symbolizer,
+        object_path.display().to_string(),
+        resolved.selected_slice.clone(),
+    ))
+}
+
+fn for_each_input_address(
+    input: Option<&Path>,
+    mut handle: impl FnMut(Result<u64, String>),
+) -> Result<()> {
+    match input {
+        Some(path) => {
+            let file = fs::File::open(path)
+                .with_context(|| format!("failed to open address input: {}", path.display()))?;
+            read_addresses(BufReader::new(file), &mut handle)
+        }
+        None => {
+            let stdin = io::stdin();
+            read_addresses(stdin.lock(), &mut handle)
+        }
+    }
+}
+
+fn read_addresses(
+    reader: impl BufRead,
+    handle: &mut impl FnMut(Result<u64, String>),
+) -> Result<()> {
+    for line in reader.lines() {
+        let line = line.context("failed to read address input")?;
+        for token in line.split_whitespace() {
+            handle(parse_address_token(token));
+        }
+    }
+    Ok(())
+}
+
+fn parse_address_token(token: &str) -> Result<u64, String> {
+    let parsed = match token
+        .strip_prefix("0x")
+        .or_else(|| token.strip_prefix("0X"))
+    {
+        Some(hex) => u64::from_str_radix(hex, 16),
+        None => token.parse::<u64>(),
+    };
+    parsed.map_err(|err| format!("invalid address '{token}': {err}"))
 }
 
 // Accepts either a Mach-O/ELF file or a `.dSYM` bundle directory and returns
@@ -240,43 +391,50 @@ fn emit_report(report: &SymbolizeReport, format: OutputFormat, verbose: bool) {
 
 fn emit_text_report(report: &SymbolizeReport, verbose: bool) {
     if verbose {
-        eprintln!("object: {}", report.object_path);
-        if let Some(selected_slice) = &report.selected_slice {
-            eprintln!(
-                "selected_slice: arch={} uuid={}",
-                selected_slice.arch,
-                selected_slice.uuid.as_deref().unwrap_or("-")
-            );
-        }
+        emit_text_header(&report.object_path, report.selected_slice.as_ref());
     }
-
     for frame in &report.frames {
-        match frame {
-            SymbolizeOutcome::Resolved(frame) => {
-                if verbose {
-                    eprintln!(
-                        "frame: requested=0x{requested:016x} lookup=0x{lookup:016x} resolver={resolver:?} status=resolved",
-                        requested = frame.requested_address,
-                        lookup = frame.lookup_address,
-                        resolver = frame.resolver,
-                    );
-                }
-                println!("{}", format_text_frame(frame));
-                for inline in &frame.inlined_by {
-                    println!("{}", format_inline_frame(inline, &frame.object_name));
-                }
+        emit_text_outcome(frame, verbose);
+    }
+}
+
+fn emit_text_header(object_path: &str, selected_slice: Option<&SelectedSlice>) {
+    eprintln!("object: {object_path}");
+    if let Some(selected_slice) = selected_slice {
+        eprintln!(
+            "selected_slice: arch={} uuid={}",
+            selected_slice.arch,
+            selected_slice.uuid.as_deref().unwrap_or("-")
+        );
+    }
+}
+
+fn emit_text_outcome(outcome: &SymbolizeOutcome, verbose: bool) {
+    match outcome {
+        SymbolizeOutcome::Resolved(frame) => {
+            if verbose {
+                eprintln!(
+                    "frame: requested=0x{requested:016x} lookup=0x{lookup:016x} resolver={resolver:?} status=resolved",
+                    requested = frame.requested_address,
+                    lookup = frame.lookup_address,
+                    resolver = frame.resolver,
+                );
             }
-            SymbolizeOutcome::Unresolved {
-                requested_address,
-                error,
-            } => {
-                if verbose {
-                    eprintln!(
-                        "frame: requested=0x{requested_address:016x} status=unresolved error={error}"
-                    );
-                }
-                println!("N/A - {error}");
+            println!("{}", format_text_frame(frame));
+            for inline in &frame.inlined_by {
+                println!("{}", format_inline_frame(inline, &frame.object_name));
             }
+        }
+        SymbolizeOutcome::Unresolved {
+            requested_address,
+            error,
+        } => {
+            if verbose {
+                eprintln!(
+                    "frame: requested=0x{requested_address:016x} status=unresolved error={error}"
+                );
+            }
+            println!("N/A - {error}");
         }
     }
 }

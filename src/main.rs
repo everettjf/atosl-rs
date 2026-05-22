@@ -31,9 +31,15 @@ struct Args {
     #[arg(short = 'l', long = "load-address", value_parser = parse_address_string)]
     load_address: u64,
 
-    /// Addresses that should be symbolized
-    #[arg(value_parser = parse_address_string, required = true)]
+    /// Addresses that should be symbolized. When omitted, addresses are read
+    /// from --input or stdin (one or more per line, whitespace-separated).
+    #[arg(value_parser = parse_address_string)]
     addresses: Vec<u64>,
+
+    /// Read addresses from this file instead of the command line (use stdin
+    /// when neither addresses nor this flag are given)
+    #[arg(short = 'i', long = "input")]
+    input: Option<PathBuf>,
 
     /// Enable verbose diagnostics
     #[arg(short, long)]
@@ -78,6 +84,7 @@ fn main() {
         arch: args.arch,
         uuid: args.uuid,
         format: args.format.into(),
+        input: args.input,
     };
 
     let exit_code = match atosl::atosl::run(options) {
