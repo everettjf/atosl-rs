@@ -383,10 +383,14 @@ fn find_object_by_id(dir: &Path, uuid: &str) -> Result<PathBuf> {
 fn resolve_debug_companion(path: &Path) -> PathBuf {
     let keep = || path.to_path_buf();
 
-    let Ok(data) = fs::read(path) else {
+    let Ok(handle) = fs::File::open(path) else {
         return keep();
     };
-    let Ok(file) = object::File::parse(data.as_slice()) else {
+    // mmap so checking large binaries only touches headers, not the whole file.
+    let Ok(mmap) = (unsafe { memmap2::Mmap::map(&handle) }) else {
+        return keep();
+    };
+    let Ok(file) = object::File::parse(&*mmap) else {
         return keep();
     };
     if is_object_dwarf(&file) {
