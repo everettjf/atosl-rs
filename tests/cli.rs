@@ -124,6 +124,79 @@ fn cli_reads_addresses_from_input_file() {
         .stdout(predicates::str::contains("(in fixture_bin)"));
 }
 
+#[test]
+fn cli_finds_object_in_directory_by_build_id() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let src = tempdir.path().join("f.c");
+    fs::write(
+        &src,
+        "int fixture_target(void){return 7;}\nint main(void){return fixture_target();}\n",
+    )
+    .unwrap();
+
+    let dir = tempdir.path().join("symbols");
+    fs::create_dir_all(&dir).unwrap();
+    let alpha = dir.join("alpha");
+    let beta = dir.join("beta");
+    let id_beta = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    build_with_build_id(&src, &alpha, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    build_with_build_id(&src, &beta, id_beta);
+
+    let address = symbol_addr(&beta, "fixture_target");
+    let load = text_addr(&beta);
+
+    Command::cargo_bin("atosl")
+        .unwrap()
+        .args([
+            "-o",
+            dir.to_str().unwrap(),
+            "--uuid",
+            id_beta,
+            "-l",
+            &format!("0x{load:x}"),
+            &format!("0x{address:x}"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("(in beta)"));
+}
+
+fn build_with_build_id(src: &Path, out: &Path, build_id: &str) {
+    let status = ProcessCommand::new("cc")
+        .args([
+            "-g",
+            "-O0",
+            &format!("-Wl,--build-id=0x{build_id}"),
+            src.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success(), "failed to build {}", out.display());
+}
+
+fn symbol_addr(path: &Path, name: &str) -> u64 {
+    let bytes = fs::read(path).unwrap();
+    let object = object::File::parse(bytes.as_slice()).unwrap();
+    object
+        .symbols()
+        .chain(object.dynamic_symbols())
+        .find(|symbol| symbol.name().map(|n| n.contains(name)).unwrap_or(false))
+        .map(|symbol| symbol.address())
+        .unwrap()
+}
+
+fn text_addr(path: &Path) -> u64 {
+    let bytes = fs::read(path).unwrap();
+    let object = object::File::parse(bytes.as_slice()).unwrap();
+    object
+        .section_by_name(".text")
+        .or_else(|| object.section_by_name("__text"))
+        .map(|section| section.address())
+        .unwrap()
+}
+
 struct Fixture {
     _tempdir: TempDir,
     binary_path: PathBuf,

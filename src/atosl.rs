@@ -228,7 +228,7 @@ fn with_symbolizer<T>(
     options: &SymbolizeOptions,
     body: impl FnOnce(&Symbolizer<'_>, String, Option<SelectedSlice>) -> T,
 ) -> Result<T> {
-    let object_path = resolve_object_path(&options.object_path)?;
+    let object_path = resolve_object_path(&options.object_path, options.uuid.as_deref())?;
     if options.verbose && object_path != options.object_path {
         eprintln!("resolved_object: {}", object_path.display());
     }
@@ -237,7 +237,10 @@ fn with_symbolizer<T>(
     let mmap = unsafe { memmap2::Mmap::map(&file) }
         .with_context(|| format!("failed to memory-map: {}", object_path.display()))?;
 
-    let parsed_uuid_filter = options.uuid.as_deref().map(parse_uuid_string).transpose()?;
+    let parsed_uuid_filter = match options.uuid.as_deref() {
+        Some(value) => parse_uuid_filter(value)?,
+        None => None,
+    };
     let resolved = resolve_object_from_data(
         &mmap,
         &object_path,
@@ -322,9 +325,10 @@ fn parse_address_token(token: &str) -> Result<u64, String> {
     parsed.map_err(|err| format!("invalid address '{token}': {err}"))
 }
 
-// Accepts either a Mach-O/ELF file or a `.dSYM` bundle directory and returns
-// the path to the binary that actually carries the symbols.
-fn resolve_object_path(path: &Path) -> Result<PathBuf> {
+// Accepts a Mach-O/ELF file, a `.dSYM` bundle directory, or (with `uuid`) a
+// directory of binaries/dSYMs to search, and returns the path to the binary
+// that actually carries the symbols.
+fn resolve_object_path(path: &Path, uuid: Option<&str>) -> Result<PathBuf> {
     if path.is_file() {
         return Ok(path.to_path_buf());
     }
@@ -334,13 +338,124 @@ fn resolve_object_path(path: &Path) -> Result<PathBuf> {
         if dwarf_dir.is_dir() {
             return select_dwarf_payload(&dwarf_dir, path);
         }
+        if let Some(uuid) = uuid {
+            return find_object_by_id(path, uuid);
+        }
         return Err(anyhow!(
-            "{} is a directory but not a dSYM bundle (missing Contents/Resources/DWARF)",
+            "{} is a directory; pass --uuid to select a matching binary/dSYM, or point at a file",
             path.display()
         ));
     }
 
     Err(anyhow!("object path does not exist: {}", path.display()))
+}
+
+// Walks `dir` for a binary or dSYM payload whose Mach-O UUID or ELF build-id
+// matches `uuid` (compared as hex, ignoring case and separators).
+fn find_object_by_id(dir: &Path, uuid: &str) -> Result<PathBuf> {
+    let wanted = normalize_hex_id(uuid);
+    if wanted.is_empty() {
+        return Err(anyhow!("invalid --uuid value: '{uuid}'"));
+    }
+
+    let mut candidates = Vec::new();
+    collect_candidate_files(dir, &mut candidates)?;
+    candidates.sort();
+
+    for candidate in &candidates {
+        if let Ok(data) = fs::read(candidate) {
+            if collect_module_ids(&data).contains(&wanted) {
+                return Ok(candidate.clone());
+            }
+        }
+    }
+
+    Err(anyhow!(
+        "no binary or dSYM under {} matched uuid {}",
+        dir.display(),
+        uuid
+    ))
+}
+
+fn collect_candidate_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    let entries = fs::read_dir(dir)
+        .with_context(|| format!("failed to read directory: {}", dir.display()))?;
+    for entry in entries {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        if file_type.is_dir() {
+            collect_candidate_files(&path, out)?;
+        } else if file_type.is_file() {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn collect_module_ids(data: &[u8]) -> Vec<String> {
+    match object::FileKind::parse(data) {
+        Ok(object::FileKind::MachOFat32) => FatHeader::parse_arch32(data)
+            .map(|arches| fat_slice_ids(arches, data))
+            .unwrap_or_default(),
+        Ok(object::FileKind::MachOFat64) => FatHeader::parse_arch64(data)
+            .map(|arches| fat_slice_ids(arches, data))
+            .unwrap_or_default(),
+        Ok(_) => slice_ids(data),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn fat_slice_ids<A: FatArch>(arches: &[A], data: &[u8]) -> Vec<String> {
+    arches
+        .iter()
+        .filter_map(|arch| arch.data(data).ok())
+        .flat_map(slice_ids)
+        .collect()
+}
+
+fn slice_ids(data: &[u8]) -> Vec<String> {
+    let Ok(file) = object::File::parse(data) else {
+        return Vec::new();
+    };
+    let mut ids = Vec::new();
+    if let Ok(Some(uuid)) = file.mach_uuid() {
+        ids.push(format_hex(&uuid));
+    }
+    if let Ok(Some(build_id)) = file.build_id() {
+        ids.push(format_hex(build_id));
+    }
+    ids
+}
+
+fn format_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn normalize_hex_id(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+// A 16-byte value is a Mach-O slice UUID and is used to pick a fat slice and to
+// validate non-fat files. Other hex lengths are build-ids used only to select a
+// file from a directory, so they impose no slice filter here.
+fn parse_uuid_filter(value: &str) -> Result<Option<[u8; 16]>> {
+    let hex = normalize_hex_id(value);
+    if hex.is_empty() || value.chars().any(|c| c != '-' && !c.is_ascii_hexdigit()) {
+        return Err(anyhow!("invalid uuid format: '{value}'"));
+    }
+    if hex.len() == 32 {
+        Ok(Some(parse_uuid_string(value)?))
+    } else {
+        Ok(None)
+    }
 }
 
 fn select_dwarf_payload(dwarf_dir: &Path, bundle: &Path) -> Result<PathBuf> {
