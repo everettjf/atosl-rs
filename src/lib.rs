@@ -27,9 +27,11 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod atosl;
+pub mod crash;
 pub mod demangle;
 
 pub use atosl::{
     InlineFrame, OutputFormat, ResolverKind, SelectedSlice, SourceLocation, SymbolizeOptions,
     SymbolizeOutcome, SymbolizeReport, SymbolizedFrame,
 };
+pub use crash::{symbolicate, CrashSymbolizeOptions};
