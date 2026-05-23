@@ -54,6 +54,68 @@ fn cli_emits_text_for_resolved_symbol() {
 }
 
 #[test]
+fn cli_emits_json_lines_for_batch() {
+    let fixture = Fixture::build().unwrap();
+    let address = fixture.symbol_address("fixture_target").unwrap();
+    let address_arg = format!("0x{address:x}");
+
+    let output = Command::cargo_bin("atosl")
+        .unwrap()
+        .args([
+            "-o",
+            fixture.binary_path().to_str().unwrap(),
+            "-l",
+            &format!("0x{:x}", fixture.load_address().unwrap()),
+            "--format",
+            "json-lines",
+            &address_arg,
+            &address_arg,
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let text = String::from_utf8(output).unwrap();
+    let lines: Vec<&str> = text.lines().filter(|line| !line.is_empty()).collect();
+    assert_eq!(lines.len(), 2);
+    for line in lines {
+        let value: Value = serde_json::from_str(line).unwrap();
+        assert_eq!(value["status"], "resolved");
+        assert_eq!(value["object_name"], "fixture_bin");
+    }
+}
+
+#[test]
+fn cli_streams_json_lines_from_stdin() {
+    let fixture = Fixture::build().unwrap();
+    let address = fixture.symbol_address("fixture_target").unwrap();
+
+    let output = Command::cargo_bin("atosl")
+        .unwrap()
+        .args([
+            "-o",
+            fixture.binary_path().to_str().unwrap(),
+            "-l",
+            &format!("0x{:x}", fixture.load_address().unwrap()),
+            "--format",
+            "json-lines",
+        ])
+        .write_stdin(format!("0x{address:x}\n0x{address:x}\n"))
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let text = String::from_utf8(output).unwrap();
+    assert_eq!(text.lines().filter(|line| !line.is_empty()).count(), 2);
+    let first: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+    assert_eq!(first["status"], "resolved");
+}
+
+#[test]
 fn cli_resolves_dsym_bundle_directory() {
     let fixture = Fixture::build().unwrap();
     let address = fixture.symbol_address("fixture_target").unwrap();

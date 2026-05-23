@@ -19,6 +19,8 @@ pub enum OutputFormat {
     Text,
     Json,
     JsonPretty,
+    /// One JSON object per address, one per line (ndjson); streams in input mode.
+    JsonLines,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -114,10 +116,10 @@ pub fn run(options: SymbolizeOptions) -> Result<i32> {
         return Ok(0);
     }
 
-    // Otherwise read addresses from a file or stdin. Text output streams a
-    // result per address; JSON collects a single document.
+    // Otherwise read addresses from a file or stdin. Text and json-lines stream
+    // a result per address; the single-document JSON formats collect.
     match options.format {
-        OutputFormat::Text => run_streaming_text(&options),
+        OutputFormat::Text | OutputFormat::JsonLines => run_streaming(&options),
         OutputFormat::Json | OutputFormat::JsonPretty => run_collected_input(&options),
     }
 }
@@ -146,22 +148,27 @@ pub fn symbolize_path(options: &SymbolizeOptions) -> Result<SymbolizeReport> {
     })
 }
 
-fn run_streaming_text(options: &SymbolizeOptions) -> Result<i32> {
+fn run_streaming(options: &SymbolizeOptions) -> Result<i32> {
     with_symbolizer(
         options,
         |symbolizer, object_path, selected_slice| -> Result<i32> {
-            if options.verbose {
+            if options.format == OutputFormat::Text && options.verbose {
                 emit_text_header(&object_path, selected_slice.as_ref());
             }
             for_each_input_address(options.input.as_deref(), |parsed| {
-                emit_text_outcome(
-                    &symbolizer.symbolize_parsed(options, parsed),
-                    options.verbose,
-                );
+                let outcome = symbolizer.symbolize_parsed(options, parsed);
+                emit_streaming_outcome(&outcome, options.format, options.verbose);
             })?;
             Ok(0)
         },
     )?
+}
+
+fn emit_streaming_outcome(outcome: &SymbolizeOutcome, format: OutputFormat, verbose: bool) {
+    match format {
+        OutputFormat::JsonLines => println!("{}", serde_json::to_string(outcome).unwrap()),
+        _ => emit_text_outcome(outcome, verbose),
+    }
 }
 
 fn run_collected_input(options: &SymbolizeOptions) -> Result<i32> {
@@ -652,6 +659,11 @@ fn emit_report(report: &SymbolizeReport, format: OutputFormat, verbose: bool) {
         OutputFormat::Text => emit_text_report(report, verbose),
         OutputFormat::Json => println!("{}", serde_json::to_string(report).unwrap()),
         OutputFormat::JsonPretty => println!("{}", serde_json::to_string_pretty(report).unwrap()),
+        OutputFormat::JsonLines => {
+            for frame in &report.frames {
+                println!("{}", serde_json::to_string(frame).unwrap());
+            }
+        }
     }
 }
 

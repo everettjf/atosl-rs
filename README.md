@@ -75,7 +75,7 @@ Key options:
 - `--uuid <UUID>`: choose a Mach-O slice by UUID, or select a file from a directory by UUID/build-id
 - `-i, --input <FILE>`: read addresses from a file (defaults to stdin when no addresses are given)
 - `--debug-dir <DIR>`: extra root to search for separate ELF debug files (repeatable)
-- `--format <text|json|json-pretty>`: select output format
+- `--format <text|json|json-pretty|json-lines>`: select output format (`json-lines` emits one ndjson object per address and streams in input mode)
 - `-v, --verbose`: print resolver diagnostics to stderr
 
 ## Examples
@@ -126,6 +126,12 @@ Emit machine-readable output:
 
 ```bash
 atosl -o MyApp.app/MyApp -l 0x100000000 --format json 0x100001234
+```
+
+Stream one JSON object per address (ndjson), e.g. piping a crash log's addresses:
+
+```bash
+cat addresses.txt | atosl -o MyApp.app.dSYM -l 0x100000000 --format json-lines
 ```
 
 Use verbose diagnostics to inspect resolver behavior:

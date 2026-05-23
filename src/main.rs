@@ -8,6 +8,7 @@ enum CliOutputFormat {
     Text,
     Json,
     JsonPretty,
+    JsonLines,
 }
 
 impl From<CliOutputFormat> for OutputFormat {
@@ -16,6 +17,7 @@ impl From<CliOutputFormat> for OutputFormat {
             CliOutputFormat::Text => OutputFormat::Text,
             CliOutputFormat::Json => OutputFormat::Json,
             CliOutputFormat::JsonPretty => OutputFormat::JsonPretty,
+            CliOutputFormat::JsonLines => OutputFormat::JsonLines,
         }
     }
 }
