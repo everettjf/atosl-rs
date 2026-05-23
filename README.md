@@ -9,7 +9,7 @@ It is designed for cross-platform tooling, CI pipelines, crash-processing utilit
 Apple's `atos` is useful, but it is tightly coupled to Apple's runtime environment. `atosl` focuses on the parts teams usually need in build systems and tooling:
 
 - A single local binary and embeddable Rust API
-- Script-friendly output in `text`, `json`, and `json-pretty`
+- Script-friendly output in `text`, `json`, `json-pretty`, and streaming `json-lines`
 - DWARF-first resolution with symbol-table fallback
 - Fat Mach-O slice selection by architecture or UUID
 - Reproducible regression coverage for Apple-specific behavior
@@ -32,7 +32,7 @@ Apple's `atos` is useful, but it is tightly coupled to Apple's runtime environme
 - Local symbolication from executables, object files, and dSYM payloads
 - Inlined call-stack expansion for DWARF frames, like `atos`
 - Multi-address lookups in a single invocation
-- Addresses from the command line, a file (`--input`), or stdin (streamed in text mode)
+- Addresses from the command line, a file (`--input`), or stdin (streamed in `text` and `json-lines` modes)
 - `.dSYM` bundle directories, or a directory searched by `--uuid` / build-id
 - Separate ELF debug files via CRC-checked `.gnu_debuglink`, build-id, or the debuginfod cache
 - Mach-O fat binaries with explicit slice selection
@@ -204,6 +204,8 @@ let report = atosl::symbolize_path(&SymbolizeOptions {
     arch: None,
     uuid: None,
     format: OutputFormat::Json,
+    input: None,
+    debug_dirs: Vec::new(),
 })?;
 ```
 
@@ -241,7 +243,7 @@ Run the benchmark binary without executing it in CI-style validation:
 cargo bench --bench batch_symbolize --no-run
 ```
 
-Release steps are documented in [RELEASING.md](/Users/eevv/focus/atosl-rs/RELEASING.md).
+Release steps are documented in [RELEASING.md](RELEASING.md).
 For a one-command release flow, run `./deploy.sh [patch|minor|major|X.Y.Z]`.
 
 ## Known limitations
