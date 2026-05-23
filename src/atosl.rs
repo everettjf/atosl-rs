@@ -6,6 +6,7 @@ use object::read::macho::{FatArch, FatHeader};
 use object::{Object, ObjectSection, ObjectSegment, SymbolMap, SymbolMapName};
 use serde::Serialize;
 use std::borrow;
+use std::env;
 use std::fs;
 use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -40,6 +41,9 @@ pub struct SymbolizeOptions {
     /// When no addresses are passed positionally, read them from this file, or
     /// from stdin when `None`.
     pub input: Option<PathBuf>,
+    /// Extra roots to search for separate ELF debug files (`.gnu_debuglink` and
+    /// `.build-id` layouts).
+    pub debug_dirs: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -228,7 +232,11 @@ fn with_symbolizer<T>(
     options: &SymbolizeOptions,
     body: impl FnOnce(&Symbolizer<'_>, String, Option<SelectedSlice>) -> T,
 ) -> Result<T> {
-    let object_path = resolve_object_path(&options.object_path, options.uuid.as_deref())?;
+    let object_path = resolve_object_path(
+        &options.object_path,
+        options.uuid.as_deref(),
+        &options.debug_dirs,
+    )?;
     if options.verbose && object_path != options.object_path {
         eprintln!("resolved_object: {}", object_path.display());
     }
@@ -328,9 +336,9 @@ fn parse_address_token(token: &str) -> Result<u64, String> {
 // Accepts a Mach-O/ELF file, a `.dSYM` bundle directory, or (with `uuid`) a
 // directory of binaries/dSYMs to search, and returns the path to the binary
 // that actually carries the symbols.
-fn resolve_object_path(path: &Path, uuid: Option<&str>) -> Result<PathBuf> {
+fn resolve_object_path(path: &Path, uuid: Option<&str>, debug_dirs: &[PathBuf]) -> Result<PathBuf> {
     if path.is_file() {
-        return Ok(resolve_debug_companion(path));
+        return Ok(resolve_debug_companion(path, debug_dirs));
     }
 
     if path.is_dir() {
@@ -380,7 +388,7 @@ fn find_object_by_id(dir: &Path, uuid: &str) -> Result<PathBuf> {
 // A stripped ELF can point at its DWARF in a separate file via `.gnu_debuglink`
 // or its build-id. When the given file carries no DWARF, follow those hints to a
 // companion debug file that exists; otherwise keep the original path.
-fn resolve_debug_companion(path: &Path) -> PathBuf {
+fn resolve_debug_companion(path: &Path, debug_dirs: &[PathBuf]) -> PathBuf {
     let keep = || path.to_path_buf();
 
     let Ok(handle) = fs::File::open(path) else {
@@ -397,52 +405,100 @@ fn resolve_debug_companion(path: &Path) -> PathBuf {
         return keep();
     }
 
-    if let Some(name) = read_debuglink_name(&file) {
-        if let Some(found) = search_debuglink_paths(path, &name) {
-            return found;
+    if let Some((name, crc)) = read_debuglink(&file) {
+        let dir = path.parent().unwrap_or_else(|| Path::new("."));
+        for candidate in debuglink_candidates(dir, &name, debug_dirs) {
+            // The CRC guards against using a debug file that no longer matches
+            // the binary, matching gdb's behavior.
+            if candidate.is_file() && file_crc32(&candidate) == Some(crc) {
+                return candidate;
+            }
         }
     }
 
     if let Ok(Some(build_id)) = file.build_id() {
-        let candidate =
-            PathBuf::from("/usr/lib/debug/.build-id").join(build_id_debug_subpath(build_id));
-        if candidate.is_file() {
-            return candidate;
+        // The build-id path itself identifies the matching debug file.
+        for candidate in build_id_candidates(build_id, debug_dirs) {
+            if candidate.is_file() {
+                return candidate;
+            }
         }
     }
 
     keep()
 }
 
-fn read_debuglink_name<'data>(file: &object::File<'data, &'data [u8]>) -> Option<String> {
+fn read_debuglink<'data>(file: &object::File<'data, &'data [u8]>) -> Option<(String, u32)> {
     let section = file.section_by_name(".gnu_debuglink")?;
     let data = section.data().ok()?;
+    if data.len() < 4 {
+        return None;
+    }
     let end = data
         .iter()
         .position(|byte| *byte == 0)
         .unwrap_or(data.len());
     let name = std::str::from_utf8(&data[..end]).ok()?;
     if name.is_empty() {
-        None
-    } else {
-        Some(name.to_string())
+        return None;
     }
+    // The 4-byte CRC trails the NUL-padded name, in the file's byte order.
+    let crc_bytes: [u8; 4] = data[data.len() - 4..].try_into().ok()?;
+    let crc = if file.is_little_endian() {
+        u32::from_le_bytes(crc_bytes)
+    } else {
+        u32::from_be_bytes(crc_bytes)
+    };
+    Some((name.to_string(), crc))
 }
 
-fn search_debuglink_paths(binary: &Path, debug_name: &str) -> Option<PathBuf> {
-    let dir = binary.parent().unwrap_or_else(|| Path::new("."));
-    let mut candidates = vec![dir.join(debug_name), dir.join(".debug").join(debug_name)];
+fn debuglink_candidates(binary_dir: &Path, name: &str, debug_dirs: &[PathBuf]) -> Vec<PathBuf> {
+    let mut candidates = vec![binary_dir.join(name), binary_dir.join(".debug").join(name)];
 
-    if let Ok(absolute) = dir.canonicalize() {
-        let stripped = absolute.strip_prefix("/").unwrap_or(&absolute);
-        candidates.push(
-            PathBuf::from("/usr/lib/debug")
-                .join(stripped)
-                .join(debug_name),
-        );
+    let mirrored = binary_dir
+        .canonicalize()
+        .ok()
+        .map(|abs| abs.strip_prefix("/").unwrap_or(&abs).to_path_buf());
+
+    let roots = std::iter::once(PathBuf::from("/usr/lib/debug")).chain(debug_dirs.iter().cloned());
+    for root in roots {
+        candidates.push(root.join(name));
+        if let Some(mirror) = &mirrored {
+            candidates.push(root.join(mirror).join(name));
+        }
     }
 
-    candidates.into_iter().find(|candidate| candidate.is_file())
+    candidates
+}
+
+fn build_id_candidates(build_id: &[u8], debug_dirs: &[PathBuf]) -> Vec<PathBuf> {
+    let subpath = build_id_debug_subpath(build_id);
+    let mut candidates = vec![PathBuf::from("/usr/lib/debug/.build-id").join(&subpath)];
+
+    for dir in debug_dirs {
+        candidates.push(dir.join(".build-id").join(&subpath));
+    }
+
+    // debuginfod stores fetched debug files at <cache>/<build-id hex>/debuginfo.
+    let hex = format_hex(build_id);
+    for cache in debuginfod_cache_dirs() {
+        candidates.push(cache.join(&hex).join("debuginfo"));
+    }
+
+    candidates
+}
+
+fn debuginfod_cache_dirs() -> Vec<PathBuf> {
+    if let Ok(path) = env::var("DEBUGINFOD_CACHE_PATH") {
+        return vec![PathBuf::from(path)];
+    }
+    if let Ok(xdg) = env::var("XDG_CACHE_HOME") {
+        return vec![PathBuf::from(xdg).join("debuginfod_client")];
+    }
+    if let Ok(home) = env::var("HOME") {
+        return vec![PathBuf::from(home).join(".cache").join("debuginfod_client")];
+    }
+    Vec::new()
 }
 
 fn build_id_debug_subpath(build_id: &[u8]) -> PathBuf {
@@ -451,6 +507,25 @@ fn build_id_debug_subpath(build_id: &[u8]) -> PathBuf {
         Some((prefix, rest)) => PathBuf::from(prefix).join(format!("{rest}.debug")),
         None => PathBuf::from(format!("{hex}.debug")),
     }
+}
+
+fn file_crc32(path: &Path) -> Option<u32> {
+    let handle = fs::File::open(path).ok()?;
+    let mmap = unsafe { memmap2::Mmap::map(&handle) }.ok()?;
+    Some(crc32(&mmap))
+}
+
+// Standard CRC-32 (reflected, polynomial 0xedb88320), as used by gnu_debuglink.
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc: u32 = 0xffff_ffff;
+    for &byte in data {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+        }
+    }
+    !crc
 }
 
 fn collect_candidate_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {

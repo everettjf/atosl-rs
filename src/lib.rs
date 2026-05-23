@@ -17,6 +17,7 @@
 //!     uuid: None,
 //!     format: OutputFormat::Json,
 //!     input: None,
+//!     debug_dirs: Vec::new(),
 //! })?;
 //!
 //! println!("{:#?}", report.frames);

@@ -18,6 +18,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         uuid: None,
         format: OutputFormat::Json,
         input: None,
+        debug_dirs: Vec::new(),
     };
 
     c.bench_function("symbolize_64_addresses", |b| {
