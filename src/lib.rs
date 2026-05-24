@@ -13,6 +13,7 @@
 //!     addresses: vec![0x1000_1234],
 //!     verbose: false,
 //!     file_offsets: false,
+//!     inline_frames: false,
 //!     arch: Some("arm64".to_string()),
 //!     uuid: None,
 //!     format: OutputFormat::Json,

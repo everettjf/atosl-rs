@@ -26,14 +26,14 @@
 - 针对 `--arch` 与 `--uuid` 的 Fat Mach-O 切片选择黄金测试
 - 针对苹果单切片与 Fat 二进制流程的 JSON 输出黄金测试
 - 针对解析器选择与逐帧查找过程的 verbose 诊断黄金测试
-- 在 macOS 上把 `atosl` 与苹果自带 `/usr/bin/atos` 逐帧对拍的差分测试（覆盖 DWARF、内联帧，以及 `-f`/`-offset` 模式）
+- 在 macOS 上把 `atosl` 与苹果自带 `/usr/bin/atos` 逐帧对拍的差分测试（覆盖 DWARF、默认模式 vs `--inline-frames`，以及 `-l 0`/`-offset` 模式）
 - 用于批量符号化吞吐量的 Criterion 基准测试目标
 - 覆盖 `fmt`、`clippy`、测试与发布构建的 GitHub Actions CI
 
 ## 它擅长处理什么
 
 - 从可执行文件、目标文件（object file）和 dSYM 载荷进行本地符号化
-- 对 DWARF 帧默认展开内联调用栈（等同于 `atos -i`）
+- 通过 `--inline-frames` 展开 DWARF 帧的内联调用栈（等同于 `atos -i`）
 - 一次调用解析多个地址
 - 地址来源可以是命令行、文件（`--input`）或标准输入（在 `text` 与 `json-lines` 模式下流式输出）
 - 支持 `.dSYM` bundle 目录，或按 `--uuid` / build-id 在某个目录中查找
@@ -73,7 +73,8 @@ atosl -o <OBJECT_PATH> -l <LOAD_ADDRESS> [OPTIONS] <ADDRESS>...
 
 常用选项：
 
-- `-f, --file-offsets`：把每个地址当作相对于镜像 `__TEXT` 基址的偏移量，行为与苹果 `atos -offset` 完全一致。该偏移会被重定位到 `__TEXT` 的 vmaddr 上；在此模式下 `--load-address` 会被**忽略**（静态文件偏移不含运行时滑动量 slide）。详见[地址模式](#地址模式)。
+- `-f, --file-offsets`：直接用 `address − load-address` 作为查找地址，**不**再重定位到 `__TEXT` 的 vmaddr 上。这是为向后兼容保留的历史模式；它与 `atos -offset` **并不等价**（见[地址模式](#地址模式)）。
+- `--inline-frames`：把内联函数展开成完整调用栈（最内层在前），等同于 `atos -i`。默认关闭。详见[内联帧](#内联帧)。
 - `-a, --arch <ARCH>`：在 Fat 二进制中选择某个 Mach-O 切片
 - `--uuid <UUID>`：按 UUID 选择 Mach-O 切片，或按 UUID/build-id 从目录中选择文件
 - `-i, --input <FILE>`：从文件读取地址（未给出任何地址时默认读取标准输入）
@@ -83,14 +84,15 @@ atosl -o <OBJECT_PATH> -l <LOAD_ADDRESS> [OPTIONS] <ADDRESS>...
 
 ### 地址模式
 
-`atosl` 支持两种地址解释方式，对应 `atos` 的两种工作流：
+`atosl` 会根据你传入的选项来解释每个地址：
 
-| 模式 | 选项 | 输入含义 | 查找地址 | 等价的 `atos` 用法 |
-| --- | --- | --- | --- | --- |
-| 加载地址模式（默认） | _无_ | 崩溃报告中看到的运行时/虚拟地址 | `address − load_address + __TEXT vmaddr` | `atos -l <load>` |
-| 文件偏移模式 | `-f` / `--file-offsets` | 相对镜像起始（`__TEXT` 基址）的偏移量 | `address + __TEXT vmaddr` | `atos -offset <off>` |
+| 模式 | 选项 | 查找地址 | 典型用途 |
+| --- | --- | --- | --- |
+| 加载地址模式（默认） | _无_、`-l <load>` | `address − load_address + __TEXT vmaddr` | 崩溃报告中的运行时/虚拟地址，配合镜像的加载地址 |
+| `atos -offset` 等价用法 | `-l 0 <off>` | `off + __TEXT vmaddr` | 相对镜像 `__TEXT` 基址的文件偏移 |
+| 文件偏移（遗留 `-f`） | `-f -l <load>` | `address − load_address` | 跳过 `__TEXT` 重定位的向后兼容模式 |
 
-在默认模式下，你传入镜像被映射到的加载地址（来自崩溃报告的 binary images 段）以及运行时地址。在文件偏移模式下，地址是一个静态偏移量，因此 `--load-address` 不适用、会被忽略。两种模式都会展开内联帧（见下文）。
+要复现苹果 `atos -offset N`，用默认模式配合零加载地址即可：`atosl -l 0 N` 算出 `N + __TEXT vmaddr`，这正是 `atos -offset` 的行为。`-f` 是一个独立的历史模式，为了不影响老用户而特意保持原样。
 
 ## 示例
 
@@ -148,10 +150,16 @@ atosl -o MyApp.app/MyApp -l 0x100000000 --format json 0x100001234
 cat addresses.txt | atosl -o MyApp.app.dSYM -l 0x100000000 --format json-lines
 ```
 
-符号化一个文件偏移（等价于 `atos -offset 0x4660`）：
+像 `atos -offset 0x4660` 那样符号化一个文件偏移（默认模式 + 零加载地址）：
 
 ```bash
-atosl -o MyApp.app.dSYM -l 0 -f 0x4660
+atosl -o MyApp.app.dSYM -l 0 0x4660
+```
+
+把内联函数展开成完整调用栈（等同于 `atos -i`）：
+
+```bash
+atosl -o MyApp.app.dSYM -l 0x100000000 --inline-frames 0x100001234
 ```
 
 用 verbose 诊断查看解析器的行为：
@@ -210,7 +218,13 @@ N/A - failed to search symbol table
 
 ## 内联帧
 
-当 DWARF 描述了内联函数时，`atosl` 默认会展开完整的内联调用栈，从最内层的帧开始——这与苹果 `atos` 加上 `-i` / `--inlineFrames` 选项时的结果一致（不加该选项时 `atos` 只打印最外层的帧）。例如，某地址位于一个内联了两个辅助函数的函数中，会打印：
+默认情况下，文本输出只打印最外层的帧——也就是物理上包含该地址的、真正未被内联的函数。这与不带选项的苹果 `atos` 一致（也与早期 `atosl` 版本的输出一致）：
+
+```text
+outer (in MyApp) (outer.c:15)
+```
+
+加上 `--inline-frames` 即可展开完整的内联调用栈，从最内层的帧开始，与 `atos -i` / `atos --inlineFrames` 的行为相同：
 
 ```text
 leaf_inline (in MyApp) (helpers.c:5)
@@ -218,7 +232,7 @@ mid_inline (in MyApp) (helpers.c:10)
 outer (in MyApp) (outer.c:15)
 ```
 
-在 JSON 输出中，内层的帧会出现在已解析帧的 `inlined_by` 字段下。
+JSON 输出不受该开关影响：它始终把最内层的帧作为主结果，并把外层的内联帧列在 `inlined_by` 字段下，因此机器可读的消费者始终能拿到完整的内联信息。
 
 ## 作为库使用
 
@@ -233,6 +247,7 @@ let report = atosl::symbolize_path(&SymbolizeOptions {
     addresses: vec![0x1234],
     verbose: false,
     file_offsets: false,
+    inline_frames: false,
     arch: None,
     uuid: None,
     format: OutputFormat::Json,
@@ -258,7 +273,7 @@ let report = atosl::symbolize_path(&SymbolizeOptions {
 ./scripts/refresh_apple_goldens.sh
 ```
 
-此外，`tests/atos_differential.rs` 会在宿主机上构建真实的 Mach-O + dSYM，并断言 `atosl` 与苹果 `/usr/bin/atos` 在 DWARF 解析、内联帧展开以及 `-f`（即 `atos -offset`）模式下逐帧一致。这些测试在非 macOS 环境或 `atos` 不可用时会自动跳过，因此在 Linux CI 上是空操作。
+此外，`tests/atos_differential.rs` 会在宿主机上构建真实的 Mach-O + dSYM，并断言 `atosl` 与苹果 `/usr/bin/atos` 逐帧一致：默认模式对比不带选项的 `atos`、`--inline-frames` 对比 `atos -i`、`atosl -l 0 <off>` 对比 `atos -offset <off>`。这些测试在非 macOS 环境或 `atos` 不可用时会自动跳过，因此在 Linux CI 上是空操作。
 
 ## 开发
 
