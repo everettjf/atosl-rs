@@ -126,6 +126,14 @@ git push origin v0.1.16
 cargo install atosl --version 0.1.16
 ```
 
+## Public API compatibility
+
+`atosl` is both a CLI and a library, so a release can break either surface.
+
+- **CLI flags**: adding a flag or relaxing a requirement is backward compatible. Renaming/removing a flag, changing a short letter, or changing what an existing flag *does* is breaking — bump the minor version (we are on `0.x`, where minor bumps signal breaking changes per Cargo semver).
+- **Library API**: `SymbolizeOptions` derives `Default`. Always construct it with `..Default::default()` in examples and docs, and prefer giving new fields a sensible `Default` value. Callers that use `..Default::default()` keep compiling when optional fields are added, so such additions are effectively non-breaking. Adding a field still breaks callers that build the struct with an exhaustive literal, so mention it in the changelog.
+- **JSON output**: the `frames` array stays 1:1 with the input addresses. Adding an optional field (e.g. one guarded by `skip_serializing_if`) is compatible; renaming or removing a field is breaking.
+
 ## Notes
 
 - crates.io versions are immutable. If you publish the wrong version, you need to release a newer one.
