@@ -1,5 +1,7 @@
 # atosl-rs
 
+*Read this in other languages: [简体中文](README.zh-CN.md).*
+
 `atosl` is a Rust CLI and library for local symbolication. It resolves raw binary addresses into function names and source locations using DWARF when available and falls back to symbol tables when debug info is missing.
 
 It is designed for cross-platform tooling, CI pipelines, crash-processing utilities, and developer workflows that need `atos`-style symbolication without depending on Apple's host environment.
@@ -24,13 +26,14 @@ Apple's `atos` is useful, but it is tightly coupled to Apple's runtime environme
 - Fat Mach-O slice-selection goldens for `--arch` and `--uuid`
 - JSON output goldens for Apple single-slice and fat-binary workflows
 - Verbose diagnostic goldens for resolver selection and per-frame lookup tracing
+- Differential tests that compare `atosl` against Apple's own `/usr/bin/atos` (DWARF, inline frames, and `-f`/`-offset` mode) on macOS
 - Criterion benchmark target for batch symbolication throughput
 - GitHub Actions CI for `fmt`, `clippy`, tests, and release builds
 
 ## What it handles well
 
 - Local symbolication from executables, object files, and dSYM payloads
-- Inlined call-stack expansion for DWARF frames, like `atos`
+- Inlined call-stack expansion for DWARF frames, on by default (like `atos -i`)
 - Multi-address lookups in a single invocation
 - Addresses from the command line, a file (`--input`), or stdin (streamed in `text` and `json-lines` modes)
 - `.dSYM` bundle directories, or a directory searched by `--uuid` / build-id
@@ -70,13 +73,24 @@ Required arguments:
 
 Key options:
 
-- `-f, --file-offsets`: interpret addresses as file offsets
+- `-f, --file-offsets`: treat each address as an offset from the image's `__TEXT` base, exactly like Apple `atos -offset`. The offset is rebased onto the `__TEXT` vmaddr; `--load-address` is **ignored** in this mode (a static file offset carries no runtime slide). See [Address modes](#address-modes).
 - `-a, --arch <ARCH>`: choose a Mach-O slice in a fat binary
 - `--uuid <UUID>`: choose a Mach-O slice by UUID, or select a file from a directory by UUID/build-id
 - `-i, --input <FILE>`: read addresses from a file (defaults to stdin when no addresses are given)
 - `--debug-dir <DIR>`: extra root to search for separate ELF debug files (repeatable)
 - `--format <text|json|json-pretty|json-lines>`: select output format (`json-lines` emits one ndjson object per address and streams in input mode)
 - `-v, --verbose`: print resolver diagnostics to stderr
+
+### Address modes
+
+`atosl` accepts addresses in two interpretations, matching the two `atos` workflows:
+
+| Mode | Flag | Input meaning | Lookup address | `atos` equivalent |
+| --- | --- | --- | --- | --- |
+| Load-address (default) | _none_ | A runtime/virtual address as seen in a crash report | `address − load_address + __TEXT vmaddr` | `atos -l <load>` |
+| File offset | `-f` / `--file-offsets` | An offset from the start of the image (`__TEXT` base) | `address + __TEXT vmaddr` | `atos -offset <off>` |
+
+In the default mode you pass the load address that the image was mapped at (from the crash report's binary images section) and the runtime addresses. In file-offset mode the address is a static offset, so `--load-address` does not apply and is ignored. Inline frames are expanded in both modes (see below).
 
 ## Examples
 
@@ -134,6 +148,12 @@ Stream one JSON object per address (ndjson), e.g. piping a crash log's addresses
 cat addresses.txt | atosl -o MyApp.app.dSYM -l 0x100000000 --format json-lines
 ```
 
+Symbolize a file offset (equivalent to `atos -offset 0x4660`):
+
+```bash
+atosl -o MyApp.app.dSYM -l 0 -f 0x4660
+```
+
 Use verbose diagnostics to inspect resolver behavior:
 
 ```bash
@@ -188,6 +208,22 @@ When symbolication fails:
 N/A - failed to search symbol table
 ```
 
+## Inline frames
+
+When DWARF describes inlined functions, `atosl` expands the full inline call
+stack by default, innermost frame first — the same result Apple `atos` produces
+with its `-i` / `--inlineFrames` flag (atos prints only the outermost frame
+without it). For example, an address inside a function that inlined two helpers
+prints:
+
+```text
+leaf_inline (in MyApp) (helpers.c:5)
+mid_inline (in MyApp) (helpers.c:10)
+outer (in MyApp) (outer.c:15)
+```
+
+In JSON output the inner frames appear under `inlined_by` on the resolved frame.
+
 ## Library usage
 
 `atosl` now exposes a library API as well as the CLI:
@@ -226,6 +262,12 @@ Refresh those snapshots on macOS with:
 ./scripts/refresh_apple_goldens.sh
 ```
 
+In addition, `tests/atos_differential.rs` builds a real Mach-O + dSYM on the
+host and asserts that `atosl` agrees with Apple's `/usr/bin/atos` frame-for-frame
+for DWARF resolution, inline-frame expansion, and `-f` (`atos -offset`) mode.
+These tests are skipped automatically when not running on macOS or when `atos`
+is unavailable, so they are a no-op on Linux CI.
+
 ## Development
 
 ```bash
@@ -252,6 +294,8 @@ For a one-command release flow, run `./deploy.sh [patch|minor|major|X.Y.Z]`.
 - Symbolication quality depends on the symbol and DWARF data in the target binary
 - Mach-O workflows remain the primary design target; other object formats work best when symbols are present
 - Apple UUIDs and dSYM layouts are covered in tests, but real crash-log ingestion is still out of scope
+- The Mach-O **debug map is not followed**. When you build with `-g` but do not run `dsymutil`, the executable keeps only `N_OSO` stabs pointing at the original `.o` files, and the line-table DWARF lives in those objects. Apple `atos` walks that debug map to recover source lines; `atosl` does not, so it falls back to the symbol table (`symbol + offset`) for such binaries. Point `atosl` at a generated `.dSYM` (or an object that embeds DWARF) to get source locations.
+- Source paths are printed in full. Apple `atos` prints only the file name unless given `-fullPath`; `atosl` always prints the path as recorded in the DWARF line table.
 
 ## License
 

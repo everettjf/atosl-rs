@@ -51,7 +51,9 @@ struct Args {
     #[arg(short, long)]
     verbose: bool,
 
-    /// Treat addresses as file offsets
+    /// Treat addresses as file offsets from the image's __TEXT base, like
+    /// `atos -offset`. The offset is rebased onto the __TEXT vmaddr, and
+    /// --load-address is ignored in this mode.
     #[arg(short = 'f', long = "file-offsets")]
     file_offset_type: bool,
 
