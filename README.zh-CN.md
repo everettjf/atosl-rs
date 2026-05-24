@@ -238,23 +238,22 @@ JSON 输出不受该开关影响：它始终把最内层的帧作为主结果，
 
 `atosl` 除命令行外，也提供库 API：
 
+`SymbolizeOptions` 实现了 `Default`，所以你只需设置自己关心的字段，其余用
+`..Default::default()` 取默认值即可：
+
 ```rust
 use atosl::{atosl, OutputFormat, SymbolizeOptions};
 
 let report = atosl::symbolize_path(&SymbolizeOptions {
     object_path: "fixture_bin".into(),
-    load_address: 0,
     addresses: vec![0x1234],
-    verbose: false,
-    file_offsets: false,
-    inline_frames: false,
-    arch: None,
-    uuid: None,
     format: OutputFormat::Json,
-    input: None,
-    debug_dirs: Vec::new(),
+    ..Default::default()
 })?;
 ```
+
+用 `..Default::default()` 还能保证：将来版本给 `SymbolizeOptions` 新增可选字段时，
+你这段代码仍然能编译通过。
 
 返回的 `SymbolizeReport` 保留了所选切片、每个地址的解析器选择、查找地址、符号名，以及可选的源码位置。
 

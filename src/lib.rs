@@ -7,18 +7,14 @@
 //! ```no_run
 //! use atosl::{atosl, OutputFormat, SymbolizeOptions};
 //!
+//! // Only set the fields you care about; the rest fall back to defaults.
 //! let report = atosl::symbolize_path(&SymbolizeOptions {
 //!     object_path: "MyApp.app/MyApp".into(),
 //!     load_address: 0x1000_0000,
 //!     addresses: vec![0x1000_1234],
-//!     verbose: false,
-//!     file_offsets: false,
-//!     inline_frames: false,
 //!     arch: Some("arm64".to_string()),
-//!     uuid: None,
 //!     format: OutputFormat::Json,
-//!     input: None,
-//!     debug_dirs: Vec::new(),
+//!     ..Default::default()
 //! })?;
 //!
 //! println!("{:#?}", report.frames);

@@ -13,9 +13,10 @@ use std::path::{Path, PathBuf};
 
 type DwarfContext<'data> = addr2line::Context<EndianSlice<'data, RunTimeEndian>>;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputFormat {
+    #[default]
     Text,
     Json,
     JsonPretty,
@@ -30,7 +31,7 @@ pub enum ResolverKind {
     SymbolTable,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct SymbolizeOptions {
     pub object_path: PathBuf,
     pub load_address: u64,

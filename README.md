@@ -243,23 +243,22 @@ so machine-readable consumers always see the complete inline information.
 
 `atosl` now exposes a library API as well as the CLI:
 
+`SymbolizeOptions` implements `Default`, so set only the fields you need and
+let the rest fall back to their defaults via `..Default::default()`:
+
 ```rust
 use atosl::{atosl, OutputFormat, SymbolizeOptions};
 
 let report = atosl::symbolize_path(&SymbolizeOptions {
     object_path: "fixture_bin".into(),
-    load_address: 0,
     addresses: vec![0x1234],
-    verbose: false,
-    file_offsets: false,
-    inline_frames: false,
-    arch: None,
-    uuid: None,
     format: OutputFormat::Json,
-    input: None,
-    debug_dirs: Vec::new(),
+    ..Default::default()
 })?;
 ```
+
+Using `..Default::default()` also keeps your code compiling if future
+releases add new optional fields to `SymbolizeOptions`.
 
 The returned `SymbolizeReport` preserves the selected slice, per-address resolver choice, lookup address, symbol name, and optional source location.
 
