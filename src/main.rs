@@ -51,11 +51,17 @@ struct Args {
     #[arg(short, long)]
     verbose: bool,
 
-    /// Treat addresses as file offsets from the image's __TEXT base, like
-    /// `atos -offset`. The offset is rebased onto the __TEXT vmaddr, and
-    /// --load-address is ignored in this mode.
+    /// Treat addresses as file offsets: the lookup uses `address -
+    /// load-address` directly, without re-basing onto the __TEXT vmaddr. To
+    /// reproduce `atos -offset N`, use the default mode instead: `atosl -l 0 N`.
     #[arg(short = 'f', long = "file-offsets")]
     file_offset_type: bool,
+
+    /// Expand inlined functions into the full call stack (innermost first),
+    /// like `atos -i`. Off by default, which prints only the outermost frame.
+    /// JSON output always includes inline frames under `inlined_by`.
+    #[arg(long = "inline-frames")]
+    inline_frames: bool,
 
     /// Select architecture for Mach-O universal/fat files
     #[arg(short = 'a', long)]
@@ -89,6 +95,7 @@ fn main() {
         addresses: args.addresses,
         verbose: args.verbose,
         file_offsets: args.file_offset_type,
+        inline_frames: args.inline_frames,
         arch: args.arch,
         uuid: args.uuid,
         format: args.format.into(),

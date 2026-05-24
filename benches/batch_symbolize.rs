@@ -14,6 +14,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         addresses: fixture.addresses().to_vec(),
         verbose: false,
         file_offsets: false,
+        inline_frames: false,
         arch: None,
         uuid: None,
         format: OutputFormat::Json,

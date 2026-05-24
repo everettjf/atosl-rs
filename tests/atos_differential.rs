@@ -21,8 +21,10 @@ use tempfile::TempDir;
 
 const ATOS: &str = "/usr/bin/atos";
 
-/// Inline-heavy address inside `outer` must expand the same way under both
-/// tools. `atosl` expands inline frames by default, which mirrors `atos -i`.
+/// With `--inline-frames`, atosl expands the inline call stack exactly like
+/// `atos -i`. By default (no flag) it prints only the outermost frame, which
+/// matches plain `atos` (no `-i`). Both are checked across `outer`, which holds
+/// the inlined leaf/mid frames.
 #[test]
 fn matches_atos_on_dwarf_and_inline_frames() -> anyhow::Result<()> {
     let Some(fixture) = InlineFixture::build()? else {
@@ -33,35 +35,37 @@ fn matches_atos_on_dwarf_and_inline_frames() -> anyhow::Result<()> {
     let outer = fixture.symbol_address("_outer")?;
     let main = fixture.symbol_address("_main")?;
     let load = fixture.text_vmaddr;
+    let payload = fixture.dsym_payload.to_str().unwrap();
 
-    // Probe every instruction-sized offset across `outer` (it holds the
-    // inlined leaf/mid frames) plus the entry of `main`.
+    // Probe every instruction-sized offset across `outer`, plus `main`.
     let mut addresses: Vec<u64> = (outer..main).step_by(4).collect();
     addresses.push(main);
 
     for address in addresses {
-        let ours = run_atosl(&[
+        // Default mode: outermost frame only, like plain `atos`.
+        let ours_default = run_atosl(&["-o", payload, "-l", &hex(load), &hex(address)]);
+        let atos_default = run_atos(&["-o", payload, "-l", &hex(load), &hex(address)])?;
+        assert_eq!(
+            normalize_frames(&ours_default),
+            normalize_frames(&atos_default),
+            "default mode disagrees at {}\n  atosl: {ours_default:?}\n  atos : {atos_default:?}",
+            hex(address),
+        );
+
+        // --inline-frames: full inline chain, like `atos -i`.
+        let ours_inline = run_atosl(&[
             "-o",
-            fixture.dsym_payload.to_str().unwrap(),
+            payload,
             "-l",
             &hex(load),
+            "--inline-frames",
             &hex(address),
         ]);
-        // `atos` only emits inline frames when asked with -i; atosl does so by
-        // default, so we compare against `atos -i`.
-        let theirs = run_atos(&[
-            "-i",
-            "-o",
-            fixture.dsym_payload.to_str().unwrap(),
-            "-l",
-            &hex(load),
-            &hex(address),
-        ])?;
-
+        let atos_inline = run_atos(&["-i", "-o", payload, "-l", &hex(load), &hex(address)])?;
         assert_eq!(
-            normalize_frames(&ours),
-            normalize_frames(&theirs),
-            "atosl/atos disagree at {}\n  atosl: {ours:?}\n  atos : {theirs:?}",
+            normalize_frames(&ours_inline),
+            normalize_frames(&atos_inline),
+            "inline mode disagrees at {}\n  atosl: {ours_inline:?}\n  atos : {atos_inline:?}",
             hex(address),
         );
     }
@@ -69,10 +73,12 @@ fn matches_atos_on_dwarf_and_inline_frames() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `atosl -f` treats the address as an offset from the image's __TEXT base,
-/// which is exactly Apple `atos -offset`.
+/// `atos -offset N` is reproduced by the default mode with a zero load address:
+/// `atosl -l 0 N` looks up `N + __TEXT vmaddr`, exactly what `atos -offset`
+/// does. (atosl's own `-f` flag is a different, historical mode and is not
+/// equivalent to `atos -offset`.)
 #[test]
-fn matches_atos_offset_mode() -> anyhow::Result<()> {
+fn matches_atos_offset_via_zero_load() -> anyhow::Result<()> {
     let Some(fixture) = InlineFixture::build()? else {
         eprintln!("skipping: atos not available");
         return Ok(());
@@ -80,29 +86,15 @@ fn matches_atos_offset_mode() -> anyhow::Result<()> {
 
     let outer = fixture.symbol_address("_outer")?;
     let offset = outer - fixture.text_vmaddr;
+    let payload = fixture.dsym_payload.to_str().unwrap();
 
-    // The load address is irrelevant in offset mode and must be ignored, so we
-    // deliberately pass a non-zero one to prove it does not change the result.
-    let ours = run_atosl(&[
-        "-o",
-        fixture.dsym_payload.to_str().unwrap(),
-        "-l",
-        &hex(fixture.text_vmaddr),
-        "-f",
-        &hex(offset),
-    ]);
-    let theirs = run_atos(&[
-        "-i",
-        "-o",
-        fixture.dsym_payload.to_str().unwrap(),
-        "-offset",
-        &hex(offset),
-    ])?;
+    let ours = run_atosl(&["-o", payload, "-l", "0", &hex(offset)]);
+    let theirs = run_atos(&["-o", payload, "-offset", &hex(offset)])?;
 
     assert_eq!(
         normalize_frames(&ours),
         normalize_frames(&theirs),
-        "atosl -f / atos -offset disagree at offset {}\n  atosl: {ours:?}\n  atos : {theirs:?}",
+        "atosl -l 0 / atos -offset disagree at offset {}\n  atosl: {ours:?}\n  atos : {theirs:?}",
         hex(offset),
     );
 

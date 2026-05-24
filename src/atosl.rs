@@ -37,6 +37,10 @@ pub struct SymbolizeOptions {
     pub addresses: Vec<u64>,
     pub verbose: bool,
     pub file_offsets: bool,
+    /// Expand inlined functions into the full call stack in text output (like
+    /// `atos -i`). When false, only the outermost frame is printed. JSON output
+    /// always carries the full inline chain under `inlined_by` regardless.
+    pub inline_frames: bool,
     pub arch: Option<String>,
     pub uuid: Option<String>,
     pub format: OutputFormat,
@@ -112,7 +116,12 @@ pub fn run(options: SymbolizeOptions) -> Result<i32> {
     // Addresses given on the command line use the batch path.
     if !options.addresses.is_empty() {
         let report = symbolize_path(&options)?;
-        emit_report(&report, options.format, options.verbose);
+        emit_report(
+            &report,
+            options.format,
+            options.verbose,
+            options.inline_frames,
+        );
         return Ok(0);
     }
 
@@ -157,17 +166,27 @@ fn run_streaming(options: &SymbolizeOptions) -> Result<i32> {
             }
             for_each_input_address(options.input.as_deref(), |parsed| {
                 let outcome = symbolizer.symbolize_parsed(options, parsed);
-                emit_streaming_outcome(&outcome, options.format, options.verbose);
+                emit_streaming_outcome(
+                    &outcome,
+                    options.format,
+                    options.verbose,
+                    options.inline_frames,
+                );
             })?;
             Ok(0)
         },
     )?
 }
 
-fn emit_streaming_outcome(outcome: &SymbolizeOutcome, format: OutputFormat, verbose: bool) {
+fn emit_streaming_outcome(
+    outcome: &SymbolizeOutcome,
+    format: OutputFormat,
+    verbose: bool,
+    inline_frames: bool,
+) {
     match format {
         OutputFormat::JsonLines => println!("{}", serde_json::to_string(outcome).unwrap()),
-        _ => emit_text_outcome(outcome, verbose),
+        _ => emit_text_outcome(outcome, verbose, inline_frames),
     }
 }
 
@@ -187,7 +206,12 @@ fn run_collected_input(options: &SymbolizeOptions) -> Result<i32> {
             })
         },
     )??;
-    emit_report(&report, options.format, options.verbose);
+    emit_report(
+        &report,
+        options.format,
+        options.verbose,
+        options.inline_frames,
+    );
     Ok(0)
 }
 
@@ -654,9 +678,9 @@ fn select_dwarf_payload(dwarf_dir: &Path, bundle: &Path) -> Result<PathBuf> {
     }
 }
 
-fn emit_report(report: &SymbolizeReport, format: OutputFormat, verbose: bool) {
+fn emit_report(report: &SymbolizeReport, format: OutputFormat, verbose: bool, inline_frames: bool) {
     match format {
-        OutputFormat::Text => emit_text_report(report, verbose),
+        OutputFormat::Text => emit_text_report(report, verbose, inline_frames),
         OutputFormat::Json => println!("{}", serde_json::to_string(report).unwrap()),
         OutputFormat::JsonPretty => println!("{}", serde_json::to_string_pretty(report).unwrap()),
         OutputFormat::JsonLines => {
@@ -667,12 +691,12 @@ fn emit_report(report: &SymbolizeReport, format: OutputFormat, verbose: bool) {
     }
 }
 
-fn emit_text_report(report: &SymbolizeReport, verbose: bool) {
+fn emit_text_report(report: &SymbolizeReport, verbose: bool, inline_frames: bool) {
     if verbose {
         emit_text_header(&report.object_path, report.selected_slice.as_ref());
     }
     for frame in &report.frames {
-        emit_text_outcome(frame, verbose);
+        emit_text_outcome(frame, verbose, inline_frames);
     }
 }
 
@@ -687,7 +711,7 @@ fn emit_text_header(object_path: &str, selected_slice: Option<&SelectedSlice>) {
     }
 }
 
-fn emit_text_outcome(outcome: &SymbolizeOutcome, verbose: bool) {
+fn emit_text_outcome(outcome: &SymbolizeOutcome, verbose: bool, inline_frames: bool) {
     match outcome {
         SymbolizeOutcome::Resolved(frame) => {
             if verbose {
@@ -698,9 +722,22 @@ fn emit_text_outcome(outcome: &SymbolizeOutcome, verbose: bool) {
                     resolver = frame.resolver,
                 );
             }
-            println!("{}", format_text_frame(frame));
-            for inline in &frame.inlined_by {
-                println!("{}", format_inline_frame(inline, &frame.object_name));
+            if inline_frames {
+                // Full inline call stack, innermost first (like `atos -i`).
+                println!("{}", format_text_frame(frame));
+                for inline in &frame.inlined_by {
+                    println!("{}", format_inline_frame(inline, &frame.object_name));
+                }
+            } else {
+                // Only the outermost frame: the real (non-inlined) function that
+                // physically contains the address. It is the last entry in the
+                // inline chain, or the primary frame when nothing was inlined.
+                match frame.inlined_by.last() {
+                    Some(outermost) => {
+                        println!("{}", format_inline_frame(outermost, &frame.object_name))
+                    }
+                    None => println!("{}", format_text_frame(frame)),
+                }
             }
         }
         SymbolizeOutcome::Unresolved {
@@ -1089,29 +1126,28 @@ fn calculate_search_address(
     text_vmaddr: u64,
     file_offset_type: bool,
 ) -> Result<u64> {
-    if file_offset_type {
-        // The address is an offset from the start of the image (its __TEXT base),
-        // exactly like Apple `atos -offset`. A static file offset carries no runtime
-        // slide, so `--load-address` does not apply and is ignored here; the lookup
-        // key is simply `text_vmaddr + offset`.
-        return address.checked_add(text_vmaddr).ok_or_else(|| {
-            anyhow!(
-                "file offset {address:#x} overflows when added to __TEXT vmaddr {text_vmaddr:#x}"
-            )
-        });
-    }
-
     let base = address.checked_sub(load_address).ok_or_else(|| {
         anyhow!(
             "address {address:#x} is smaller than load address {load_address:#x}; \
-pass the runtime address as reported in the crash, or use -f/--file-offsets if \
-the value is a file offset"
+pass the runtime address as reported in the crash report"
         )
     })?;
 
-    base.checked_add(text_vmaddr).ok_or_else(|| {
-        anyhow!("address {address:#x} overflows when applying __TEXT vmaddr {text_vmaddr:#x}")
-    })
+    if file_offset_type {
+        // File-offset mode uses `address - load_address` directly as the lookup
+        // key, without re-basing onto the __TEXT vmaddr. This is the historical
+        // behavior and is kept stable so existing callers are unaffected.
+        //
+        // Note: this is *not* the same as Apple `atos -offset N`. To reproduce
+        // `atos -offset N`, use the default mode with a zero load address:
+        // `atosl -l 0 N` computes `N + __TEXT vmaddr`, exactly what `atos
+        // -offset` does.
+        Ok(base)
+    } else {
+        base.checked_add(text_vmaddr).ok_or_else(|| {
+            anyhow!("address {address:#x} overflows when applying __TEXT vmaddr {text_vmaddr:#x}")
+        })
+    }
 }
 
 fn symbol_symbolize_address(
@@ -1275,15 +1311,11 @@ mod tests {
 
     #[test]
     fn calculate_search_address_for_file_offsets() {
-        // File offsets are rebased onto the __TEXT vmaddr (like `atos -offset`) and
-        // the load address is ignored, so the value of `load_address` must not matter.
+        // File-offset mode uses `address - load_address` directly, without
+        // re-basing onto the __TEXT vmaddr. This is the historical behavior.
         assert_eq!(
-            calculate_search_address(0x1000, 0x30, 0x2000, true).unwrap(),
-            0x2030
-        );
-        assert_eq!(
-            calculate_search_address(0, 0x30, 0x2000, true).unwrap(),
-            0x2030
+            calculate_search_address(0x1000, 0x1030, 0x2000, true).unwrap(),
+            0x30
         );
     }
 

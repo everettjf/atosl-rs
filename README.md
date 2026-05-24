@@ -26,14 +26,14 @@ Apple's `atos` is useful, but it is tightly coupled to Apple's runtime environme
 - Fat Mach-O slice-selection goldens for `--arch` and `--uuid`
 - JSON output goldens for Apple single-slice and fat-binary workflows
 - Verbose diagnostic goldens for resolver selection and per-frame lookup tracing
-- Differential tests that compare `atosl` against Apple's own `/usr/bin/atos` (DWARF, inline frames, and `-f`/`-offset` mode) on macOS
+- Differential tests that compare `atosl` against Apple's own `/usr/bin/atos` (DWARF, default vs `--inline-frames`, and `-l 0`/`-offset` mode) on macOS
 - Criterion benchmark target for batch symbolication throughput
 - GitHub Actions CI for `fmt`, `clippy`, tests, and release builds
 
 ## What it handles well
 
 - Local symbolication from executables, object files, and dSYM payloads
-- Inlined call-stack expansion for DWARF frames, on by default (like `atos -i`)
+- Inlined call-stack expansion for DWARF frames via `--inline-frames` (like `atos -i`)
 - Multi-address lookups in a single invocation
 - Addresses from the command line, a file (`--input`), or stdin (streamed in `text` and `json-lines` modes)
 - `.dSYM` bundle directories, or a directory searched by `--uuid` / build-id
@@ -73,7 +73,8 @@ Required arguments:
 
 Key options:
 
-- `-f, --file-offsets`: treat each address as an offset from the image's `__TEXT` base, exactly like Apple `atos -offset`. The offset is rebased onto the `__TEXT` vmaddr; `--load-address` is **ignored** in this mode (a static file offset carries no runtime slide). See [Address modes](#address-modes).
+- `-f, --file-offsets`: use `address − load-address` directly as the lookup address, without re-basing onto the `__TEXT` vmaddr. This is a historical mode kept for backward compatibility; it is **not** the same as `atos -offset` (see [Address modes](#address-modes)).
+- `--inline-frames`: expand inlined functions into the full call stack (innermost first), like `atos -i`. Off by default. See [Inline frames](#inline-frames).
 - `-a, --arch <ARCH>`: choose a Mach-O slice in a fat binary
 - `--uuid <UUID>`: choose a Mach-O slice by UUID, or select a file from a directory by UUID/build-id
 - `-i, --input <FILE>`: read addresses from a file (defaults to stdin when no addresses are given)
@@ -83,14 +84,15 @@ Key options:
 
 ### Address modes
 
-`atosl` accepts addresses in two interpretations, matching the two `atos` workflows:
+`atosl` interprets each input address according to the flags you pass:
 
-| Mode | Flag | Input meaning | Lookup address | `atos` equivalent |
-| --- | --- | --- | --- | --- |
-| Load-address (default) | _none_ | A runtime/virtual address as seen in a crash report | `address − load_address + __TEXT vmaddr` | `atos -l <load>` |
-| File offset | `-f` / `--file-offsets` | An offset from the start of the image (`__TEXT` base) | `address + __TEXT vmaddr` | `atos -offset <off>` |
+| Mode | Flags | Lookup address | Typical use |
+| --- | --- | --- | --- |
+| Load-address (default) | _none_, `-l <load>` | `address − load_address + __TEXT vmaddr` | Runtime/virtual addresses from a crash report, with the image's load address |
+| `atos -offset` equivalent | `-l 0 <off>` | `off + __TEXT vmaddr` | A file offset from the image's `__TEXT` base |
+| File offsets (legacy `-f`) | `-f -l <load>` | `address − load_address` | Backward-compatible mode that skips `__TEXT` re-basing |
 
-In the default mode you pass the load address that the image was mapped at (from the crash report's binary images section) and the runtime addresses. In file-offset mode the address is a static offset, so `--load-address` does not apply and is ignored. Inline frames are expanded in both modes (see below).
+To reproduce Apple `atos -offset N`, use the default mode with a zero load address: `atosl -l 0 N` computes `N + __TEXT vmaddr`, which is exactly what `atos -offset` does. The `-f` flag is a separate, historical mode and is intentionally left unchanged for existing callers.
 
 ## Examples
 
@@ -148,10 +150,16 @@ Stream one JSON object per address (ndjson), e.g. piping a crash log's addresses
 cat addresses.txt | atosl -o MyApp.app.dSYM -l 0x100000000 --format json-lines
 ```
 
-Symbolize a file offset (equivalent to `atos -offset 0x4660`):
+Symbolize a file offset the way `atos -offset 0x4660` does (default mode, zero load address):
 
 ```bash
-atosl -o MyApp.app.dSYM -l 0 -f 0x4660
+atosl -o MyApp.app.dSYM -l 0 0x4660
+```
+
+Expand inlined functions into the full call stack (like `atos -i`):
+
+```bash
+atosl -o MyApp.app.dSYM -l 0x100000000 --inline-frames 0x100001234
 ```
 
 Use verbose diagnostics to inspect resolver behavior:
@@ -210,11 +218,16 @@ N/A - failed to search symbol table
 
 ## Inline frames
 
-When DWARF describes inlined functions, `atosl` expands the full inline call
-stack by default, innermost frame first — the same result Apple `atos` produces
-with its `-i` / `--inlineFrames` flag (atos prints only the outermost frame
-without it). For example, an address inside a function that inlined two helpers
-prints:
+By default, text output prints only the outermost frame — the real,
+non-inlined function that physically contains the address. This matches plain
+Apple `atos` (and the output of earlier `atosl` releases):
+
+```text
+outer (in MyApp) (outer.c:15)
+```
+
+Pass `--inline-frames` to expand the full inline call stack, innermost frame
+first, the same way `atos -i` / `atos --inlineFrames` does:
 
 ```text
 leaf_inline (in MyApp) (helpers.c:5)
@@ -222,7 +235,9 @@ mid_inline (in MyApp) (helpers.c:10)
 outer (in MyApp) (outer.c:15)
 ```
 
-In JSON output the inner frames appear under `inlined_by` on the resolved frame.
+JSON output is unaffected by this flag: it always reports the innermost frame
+as the primary result and lists the enclosing inline frames under `inlined_by`,
+so machine-readable consumers always see the complete inline information.
 
 ## Library usage
 
@@ -237,6 +252,7 @@ let report = atosl::symbolize_path(&SymbolizeOptions {
     addresses: vec![0x1234],
     verbose: false,
     file_offsets: false,
+    inline_frames: false,
     arch: None,
     uuid: None,
     format: OutputFormat::Json,
@@ -263,10 +279,11 @@ Refresh those snapshots on macOS with:
 ```
 
 In addition, `tests/atos_differential.rs` builds a real Mach-O + dSYM on the
-host and asserts that `atosl` agrees with Apple's `/usr/bin/atos` frame-for-frame
-for DWARF resolution, inline-frame expansion, and `-f` (`atos -offset`) mode.
-These tests are skipped automatically when not running on macOS or when `atos`
-is unavailable, so they are a no-op on Linux CI.
+host and asserts that `atosl` agrees with Apple's `/usr/bin/atos` frame-for-frame:
+default mode against plain `atos`, `--inline-frames` against `atos -i`, and
+`atosl -l 0 <off>` against `atos -offset <off>`. These tests are skipped
+automatically when not running on macOS or when `atos` is unavailable, so they
+are a no-op on Linux CI.
 
 ## Development
 
