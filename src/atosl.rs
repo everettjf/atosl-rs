@@ -1089,16 +1089,29 @@ fn calculate_search_address(
     text_vmaddr: u64,
     file_offset_type: bool,
 ) -> Result<u64> {
-    let base = address
-        .checked_sub(load_address)
-        .ok_or_else(|| anyhow!("address is smaller than load address"))?;
-
     if file_offset_type {
-        Ok(base)
-    } else {
-        base.checked_add(text_vmaddr)
-            .ok_or_else(|| anyhow!("address overflow while applying text vmaddr"))
+        // The address is an offset from the start of the image (its __TEXT base),
+        // exactly like Apple `atos -offset`. A static file offset carries no runtime
+        // slide, so `--load-address` does not apply and is ignored here; the lookup
+        // key is simply `text_vmaddr + offset`.
+        return address.checked_add(text_vmaddr).ok_or_else(|| {
+            anyhow!(
+                "file offset {address:#x} overflows when added to __TEXT vmaddr {text_vmaddr:#x}"
+            )
+        });
     }
+
+    let base = address.checked_sub(load_address).ok_or_else(|| {
+        anyhow!(
+            "address {address:#x} is smaller than load address {load_address:#x}; \
+pass the runtime address as reported in the crash, or use -f/--file-offsets if \
+the value is a file offset"
+        )
+    })?;
+
+    base.checked_add(text_vmaddr).ok_or_else(|| {
+        anyhow!("address {address:#x} overflows when applying __TEXT vmaddr {text_vmaddr:#x}")
+    })
 }
 
 fn symbol_symbolize_address(
@@ -1262,9 +1275,15 @@ mod tests {
 
     #[test]
     fn calculate_search_address_for_file_offsets() {
+        // File offsets are rebased onto the __TEXT vmaddr (like `atos -offset`) and
+        // the load address is ignored, so the value of `load_address` must not matter.
         assert_eq!(
-            calculate_search_address(0x1000, 0x1030, 0x2000, true).unwrap(),
-            0x30
+            calculate_search_address(0x1000, 0x30, 0x2000, true).unwrap(),
+            0x2030
+        );
+        assert_eq!(
+            calculate_search_address(0, 0x30, 0x2000, true).unwrap(),
+            0x2030
         );
     }
 
