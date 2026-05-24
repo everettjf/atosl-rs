@@ -6,6 +6,8 @@
 
 It is designed for cross-platform tooling, CI pipelines, crash-processing utilities, and developer workflows that need `atos`-style symbolication without depending on Apple's host environment.
 
+📖 **Full documentation and tutorials:** <https://everettjf.github.io/atosl-rs/> (the source lives in [`docs/`](docs/)).
+
 ## Why this exists
 
 Apple's `atos` is useful, but it is tightly coupled to Apple's runtime environment. `atosl` focuses on the parts teams usually need in build systems and tooling:

@@ -1,0 +1,41 @@
+title: atosl
+description: >-
+  Local symbolication CLI and Rust library. atosl is an atos-style tool that
+  resolves binary addresses to function names and source locations using DWARF,
+  with a symbol-table fallback.
+
+theme: just-the-docs
+
+# Project site lives at https://everettjf.github.io/atosl-rs/.
+# The Pages workflow overrides baseurl with the deployment base path.
+url: https://everettjf.github.io
+baseurl: /atosl-rs
+
+search_enabled: true
+heading_anchors: true
+
+# Dark theme to match a developer-tools audience.
+color_scheme: dark
+
+# Link back to the repository from the top-right of every page.
+aux_links:
+  GitHub:
+    - https://github.com/everettjf/atosl-rs
+aux_links_new_tab: true
+
+# Footer / "edit this page" links point at the docs folder on main.
+gh_edit_link: true
+gh_edit_link_text: Edit this page on GitHub
+gh_edit_repository: https://github.com/everettjf/atosl-rs
+gh_edit_branch: main
+gh_edit_source: docs
+gh_edit_view_mode: tree
+
+plugins:
+  - jekyll-seo-tag
+
+# Keep build artifacts and tooling out of the generated site.
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor
