@@ -40,6 +40,7 @@ Apple's `atos` is useful, but it is tightly coupled to Apple's runtime environme
 - Addresses from the command line, a file (`--input`), or stdin (streamed in `text` and `json-lines` modes)
 - `.dSYM` bundle directories, or a directory searched by `--uuid` / build-id
 - Separate ELF debug files via CRC-checked `.gnu_debuglink`, build-id, or the debuginfod cache
+- Whole crash-report symbolication for Apple `.ips` and legacy `.crash`, matching each image by UUID
 - Mach-O fat binaries with explicit slice selection
 - Machine-readable integration through JSON output
 - Debugging symbolication decisions through verbose diagnostics
@@ -197,6 +198,27 @@ Example JSON shape:
   ]
 }
 ```
+
+## Symbolicating a whole crash report
+
+The `crash` subcommand symbolicates an entire Apple crash report — modern
+`.ips` (JSON) or legacy `.crash` (text) — rewriting each backtrace frame in
+place. Point it at one or more directories of dSYMs/binaries; every referenced
+image is matched by its UUID (or build-id):
+
+```bash
+atosl crash MyApp-2024.ips --dsym-dir ./dsyms --dsym-dir ./more-dsyms
+```
+
+It reads the report from stdin when no path is given, and writes to stdout (or
+`--output <FILE>`):
+
+```bash
+cat MyApp.crash | atosl crash --dsym-dir ./dsyms > MyApp.symbolicated.crash
+```
+
+Images without a matching dSYM are left untouched, so partial symbol sets still
+produce a usable report.
 
 ## Text output
 

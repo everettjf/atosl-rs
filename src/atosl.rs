@@ -6,6 +6,7 @@ use object::read::macho::{FatArch, FatHeader};
 use object::{Object, ObjectSection, ObjectSegment, SymbolMap, SymbolMapName};
 use serde::Serialize;
 use std::borrow;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, BufReader};
@@ -216,7 +217,7 @@ fn run_collected_input(options: &SymbolizeOptions) -> Result<i32> {
     Ok(0)
 }
 
-struct Symbolizer<'a> {
+pub(crate) struct Symbolizer<'a> {
     object_name: &'a str,
     context: Option<&'a DwarfContext<'a>>,
     symbol_map: &'a SymbolMap<SymbolMapName<'a>>,
@@ -224,7 +225,7 @@ struct Symbolizer<'a> {
 }
 
 impl Symbolizer<'_> {
-    fn symbolize(
+    pub(crate) fn symbolize(
         &self,
         load_address: u64,
         requested_address: u64,
@@ -260,7 +261,7 @@ impl Symbolizer<'_> {
 // `body`. Keeping the borrowed state inside one stack frame avoids a
 // self-referential struct (the context borrows the sections, which borrow the
 // mmap).
-fn with_symbolizer<T>(
+pub(crate) fn with_symbolizer<T>(
     options: &SymbolizeOptions,
     body: impl FnOnce(&Symbolizer<'_>, String, Option<SelectedSlice>) -> T,
 ) -> Result<T> {
@@ -560,6 +561,25 @@ fn crc32(data: &[u8]) -> u32 {
     !crc
 }
 
+// Indexes every binary/dSYM under `dirs` by Mach-O UUID and ELF build-id (hex),
+// so crash-log images can be matched in one pass instead of rescanning per image.
+pub(crate) fn index_object_dirs(dirs: &[PathBuf]) -> HashMap<String, PathBuf> {
+    let mut index = HashMap::new();
+    for dir in dirs {
+        let mut candidates = Vec::new();
+        let _ = collect_candidate_files(dir, &mut candidates);
+        candidates.sort();
+        for candidate in candidates {
+            if let Ok(data) = fs::read(&candidate) {
+                for id in collect_module_ids(&data) {
+                    index.entry(id).or_insert_with(|| candidate.clone());
+                }
+            }
+        }
+    }
+    index
+}
+
 fn collect_candidate_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     let entries = fs::read_dir(dir)
         .with_context(|| format!("failed to read directory: {}", dir.display()))?;
@@ -618,7 +638,7 @@ fn format_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn normalize_hex_id(value: &str) -> String {
+pub(crate) fn normalize_hex_id(value: &str) -> String {
     value
         .chars()
         .filter(|c| c.is_ascii_hexdigit())
