@@ -318,3 +318,7 @@ For a one-command release flow, run `./deploy.sh [patch|minor|major|X.Y.Z]`.
 ## License
 
 MIT. See `LICENSE`.
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=everettjf/atosl-rs&type=Date)](https://star-history.com/#everettjf/atosl-rs&Date)
