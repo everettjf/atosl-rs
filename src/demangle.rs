@@ -31,10 +31,7 @@ mod tests {
     fn demangle_cpp() {
         let name = Name::from("_ZN3foo3barEv");
         assert_eq!(name.detect_language(), Language::Cpp);
-        assert_eq!(
-            name.try_demangle(DemangleOptions::complete()),
-            "foo::bar()"
-        );
+        assert_eq!(name.try_demangle(DemangleOptions::complete()), "foo::bar()");
     }
 
     #[test]
