@@ -1,7 +1,9 @@
-use atosl::{OutputFormat, SymbolizeOptions};
+use atosl::{CrashSymbolizeOptions, OutputFormat, SymbolizeOptions};
 use clap::{Parser, ValueEnum};
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process;
+use std::{fs, io};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 enum CliOutputFormat {
@@ -22,9 +24,36 @@ impl From<CliOutputFormat> for OutputFormat {
     }
 }
 
+/// Symbolicate a whole crash report (.ips or legacy .crash text).
+///
+/// Invoked as `atosl crash <REPORT>`; the `crash` token is routed before the
+/// default address-symbolication parser so it never collides with positional
+/// addresses.
+#[derive(Parser, Debug)]
+#[command(name = "atosl crash", about)]
+struct CrashArgs {
+    /// Crash report path (.ips or .crash); reads stdin when omitted
+    crash_path: Option<PathBuf>,
+
+    /// Directory of dSYMs/binaries to match report images by UUID (repeatable)
+    #[arg(short = 'd', long = "dsym-dir")]
+    dsym_dir: Vec<PathBuf>,
+
+    /// Write the symbolicated report here (defaults to stdout)
+    #[arg(short = 'o', long = "output")]
+    output: Option<PathBuf>,
+
+    /// Enable verbose diagnostics
+    #[arg(short, long)]
+    verbose: bool,
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
-struct Args {
+#[command(
+    after_help = "Run `atosl crash <REPORT> --dsym-dir <DIR>` to symbolicate a whole crash report."
+)]
+struct SymbolizeArgs {
     /// Symbol file path or binary file path
     #[arg(short = 'o', long = "object", value_name = "OBJECT_PATH")]
     object_path: PathBuf,
@@ -88,7 +117,30 @@ fn parse_address_string(address: &str) -> Result<u64, String> {
 }
 
 fn main() {
-    let args = Args::parse();
+    // Route `atosl crash ...` to the crash parser before the default parser, so
+    // the report path never competes with positional addresses.
+    let mut argv: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    let is_crash = argv.get(1).map(|arg| arg == "crash").unwrap_or(false);
+
+    let result = if is_crash {
+        argv.remove(1);
+        run_crash(CrashArgs::parse_from(argv))
+    } else {
+        run_symbolize(SymbolizeArgs::parse())
+    };
+
+    let exit_code = match result {
+        Ok(code) => code,
+        Err(err) => {
+            eprintln!("{err:#}");
+            1
+        }
+    };
+
+    process::exit(exit_code);
+}
+
+fn run_symbolize(args: SymbolizeArgs) -> anyhow::Result<i32> {
     let options = SymbolizeOptions {
         object_path: args.object_path,
         load_address: args.load_address,
@@ -103,15 +155,41 @@ fn main() {
         debug_dirs: args.debug_dir,
     };
 
-    let exit_code = match atosl::atosl::run(options) {
-        Ok(code) => code,
-        Err(err) => {
-            eprintln!("{err:#}");
-            1
+    atosl::atosl::run(options)
+}
+
+fn run_crash(args: CrashArgs) -> anyhow::Result<i32> {
+    use anyhow::Context as _;
+
+    let input = match &args.crash_path {
+        Some(path) => fs::read_to_string(path)
+            .with_context(|| format!("failed to read crash report: {}", path.display()))?,
+        None => {
+            let mut buffer = String::new();
+            io::stdin()
+                .read_to_string(&mut buffer)
+                .context("failed to read crash report from stdin")?;
+            buffer
         }
     };
 
-    process::exit(exit_code);
+    let report = atosl::symbolicate(
+        &input,
+        &CrashSymbolizeOptions {
+            dsym_dirs: args.dsym_dir,
+            verbose: args.verbose,
+        },
+    )?;
+
+    match &args.output {
+        Some(path) => fs::write(path, report)
+            .with_context(|| format!("failed to write symbolicated report: {}", path.display()))?,
+        None => io::stdout()
+            .write_all(report.as_bytes())
+            .context("failed to write symbolicated report")?,
+    }
+
+    Ok(0)
 }
 
 #[cfg(test)]
