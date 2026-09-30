@@ -304,7 +304,11 @@ fn with_symbolizer<T>(
     };
     let context = match &dwarf_sections {
         Some(sections) => {
-            let dwarf = sections.borrow(|section| EndianSlice::new(section.as_ref(), endian));
+            let mut dwarf = sections.borrow(|section| EndianSlice::new(section.as_ref(), endian));
+            // dsymutil emits a single abbreviation table shared by every unit.
+            // Without the cache, gimli re-parses and keeps a separate copy of it
+            // per unit, which dominates context construction on large dSYMs.
+            dwarf.populate_abbreviations_cache(gimli::AbbreviationsCacheStrategy::Duplicates);
             Some(DwarfContext::from_dwarf(dwarf).context("failed to build DWARF context")?)
         }
         None => None,
