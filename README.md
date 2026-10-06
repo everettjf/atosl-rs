@@ -1,5 +1,7 @@
 # atosl-rs
 
+[Discord](https://discord.gg/eGzEaP6TzR)
+
 *Read this in other languages: [简体中文](README.zh-CN.md).*
 
 `atosl` is a Rust CLI and library for local symbolication. It resolves raw binary addresses into function names and source locations using DWARF when available and falls back to symbol tables when debug info is missing.

@@ -23,7 +23,12 @@ impl From<CliOutputFormat> for OutputFormat {
 }
 
 #[derive(Parser, Debug)]
-#[command(author, version, about)]
+#[command(
+    author,
+    version,
+    about,
+    after_help = "Discord: https://discord.gg/eGzEaP6TzR"
+)]
 struct Args {
     /// Symbol file path or binary file path
     #[arg(short = 'o', long = "object", value_name = "OBJECT_PATH")]

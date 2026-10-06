@@ -1,5 +1,7 @@
 # atosl-rs
 
+[Discord](https://discord.gg/eGzEaP6TzR)
+
 *其他语言版本：[English](README.md)。*
 
 `atosl` 是一个用于本地符号化（symbolication）的 Rust 命令行工具和库。它把原始的二进制地址解析为函数名和源码位置：有 DWARF 调试信息时优先使用 DWARF，缺少调试信息时回退到符号表。
